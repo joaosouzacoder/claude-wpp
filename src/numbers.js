@@ -3,9 +3,10 @@ export function normalizeNumber(entrada) {
   return String(entrada).split('@')[0].split(':')[0].replace(/\D/g, '')
 }
 
-// Celular brasileiro: 55 + DDD (2) + 9 + 8 dígitos. O WhatsApp às vezes entrega
-// o formato antigo, sem o nono dígito. Removemos o 9 dos dois lados antes de
-// comparar — mantendo país e DDD intactos, para não casar DDDs diferentes.
+// Brazilian mobile: 55 + area code (2) + 9 + 8 digits. WhatsApp sometimes hands
+// over the legacy format, without the ninth digit. Strip the 9 from both sides
+// before comparing — keeping country and area code intact, so that two different
+// area codes never match.
 function semNonoDigito(digitos) {
   return /^55\d{2}9\d{8}$/.test(digitos) ? digitos.slice(0, 4) + digitos.slice(5) : digitos
 }
@@ -18,8 +19,8 @@ export function sameNumber(a, b) {
   return semNonoDigito(x) === semNonoDigito(y)
 }
 
-// Em versões recentes do Baileys o remoteJid pode ser um "@lid", que não é
-// telefone. Nesse caso só aceitamos a mensagem se o telefone real vier junto.
+// In recent Baileys versions remoteJid can be an "@lid", which is not a phone
+// number. In that case accept the message only if the real phone comes with it.
 export function senderNumber(key = {}) {
   const candidatos = [key.senderPn, key.remoteJidAlt, key.participantPn, key.participant, key.remoteJid]
   for (const jid of candidatos) {

@@ -1,63 +1,64 @@
 # claude-wpp
 
-Claude Code pelo WhatsApp, com várias sessões paralelas, usando a subscription
-já autenticada neste host. Não consome a API paga.
+Claude Code over WhatsApp, with several parallel sessions, using the
+subscription already authenticated on this host. It does not consume the paid
+API.
 
-## Instalação
+## Install
 
 ```bash
 cd ~/claude-wpp
 npm install
-cp config.example.json config.json    # ponha o seu apiToken
+cp config.example.json config.json    # set your apiToken and numbers
 ./install.sh
-sudo loginctl enable-linger "$USER"   # uma vez só
-npm run pair                          # leia o QR com o número do bot
+sudo loginctl enable-linger "$USER"   # once
+npm run pair                          # scan the QR code with the bot number
 systemctl --user start claude-wpp
 ```
 
-## Uso no WhatsApp
+## Usage on WhatsApp
 
-| Comando | Efeito |
+| Command | Effect |
 |---|---|
-| `/new [dir] [nome]` | cria a sessão e ativa |
-| `/ls` | lista as sessões |
-| `/use <nome>` | troca a sessão ativa |
-| `/end [nome]` | encerra a sessão |
-| `/stop` | interrompe o que a ativa está fazendo |
-| `/help` | lista os comandos |
-| `@nome texto` | manda pra outra sessão sem trocar a ativa |
-| texto solto | vai pra sessão ativa |
+| `/new [dir] [name]` | creates a session and makes it active |
+| `/ls` | lists the sessions |
+| `/use <name>` | switches the active session |
+| `/end [name]` | ends the session |
+| `/stop` | interrupts whatever the active session is doing |
+| `/help` | lists the commands |
+| `@name text` | sends to another session without switching the active one |
+| bare text | goes to the active session |
 
-Quando algo passa de 8 segundos, o bot responde `Trabalhando nisso.` uma vez e
-depois manda o resultado. Toda resposta vem prefixada com `[nome-da-sessão]`,
-porque com sessões paralelas elas chegam fora de ordem.
+When something takes longer than 8 seconds, the bot replies `Trabalhando nisso.`
+once and sends the result afterwards. Every reply is prefixed with
+`[session-name]`, because with parallel sessions they arrive out of order.
 
-Exemplo:
+Example:
 
 ```
 /new ~/work/api api
 > Sessão [api] criada em /home/user/work/api
 
-lista os testes que falham
+list the failing tests
 > Trabalhando nisso.
-> [api] 3 testes falhando em auth_spec.rb...
+> [api] 3 tests failing in auth_spec.rb...
 
-@infra checa o disco do srv1
-> [infra] /dev/sda1 em 81%
+@infra check the disk on srv1
+> [infra] /dev/sda1 at 81%
 ```
 
-## API local
+## Local API
 
 ```bash
 curl -X POST localhost:8787/send \
   -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
-  -d '{"to":"5511911111111","text":"oi"}'
+  -d '{"to":"5511911111111","text":"hi"}'
 
 curl localhost:8787/healthz
 ```
 
-## Operação
+## Operation
 
 ```bash
 systemctl --user status claude-wpp
@@ -65,19 +66,19 @@ journalctl --user -u claude-wpp -f
 systemctl --user restart claude-wpp
 ```
 
-O estado fica em `~/.local/state/claude-wpp/`. O histórico das conversas
-pertence ao Claude Code, em `~/.claude/projects/` — reiniciar o serviço não
-perde nenhuma sessão.
+State lives in `~/.local/state/claude-wpp/`. The conversation history belongs to
+Claude Code, under `~/.claude/projects/` — restarting the service loses no
+session.
 
-## Testes
+## Tests
 
 ```bash
 npm test
 ```
 
-## Aviso
+## Warning
 
-O serviço roda o Claude com `--dangerously-skip-permissions` e diretório livre.
-Quem tiver acesso ao WhatsApp autorizado executa comandos nesta máquina como o
-seu usuário. Só o número configurado em `authorizedNumber` é atendido; qualquer
-outro remetente é ignorado em silêncio.
+The service runs Claude with `--dangerously-skip-permissions` and an unrestricted
+working directory. Whoever has access to the authorized WhatsApp number runs
+commands on this machine as your user. Only the number configured in
+`authorizedNumber` is served; any other sender is silently ignored.

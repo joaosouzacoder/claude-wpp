@@ -1,157 +1,159 @@
-# claude-wpp — Claude Code via WhatsApp
+# claude-wpp — Claude Code over WhatsApp
 
-**Data:** 2026-08-22
-**Status:** aprovado, pronto para plano de implementação
+**Date:** 2026-08-22
+**Status:** approved, ready for the implementation plan
 
-## Problema
+## Problem
 
-Conversar com o Claude Code pelo WhatsApp, a partir do celular, mantendo várias
-conversas independentes e reaproveitando a subscription já autenticada neste
-host — sem consumir a API paga.
+Talk to Claude Code over WhatsApp, from a phone, keeping several independent
+conversations and reusing the subscription already authenticated on this host —
+without consuming the paid API.
 
-## Decisões
+## Decisions
 
-| Decisão | Escolha | Motivo |
+| Decision | Choice | Reason |
 |---|---|---|
-| Linguagem | Node 24 (ESM) | Já instalado; Baileys é a melhor biblioteca de WhatsApp e é Node |
-| Biblioteca WhatsApp | `@whiskeysockets/baileys` | WebSocket puro, sem Chromium; ~80MB de RAM contra ~500MB do `whatsapp-web.js`, que ainda quebra quando o DOM do WhatsApp Web muda |
-| Driver do Claude | `claude -p` one-shot + `--resume <session_id>` | Estado vive em `~/.claude/projects/`, então o daemon é descartável; paralelismo sai de graça |
-| Permissões | `--dangerously-skip-permissions`, cwd livre | Não há como aprovar prompt de permissão pelo WhatsApp |
-| Roteamento | Sessão ativa + prefixo `@nome` | Mensagem solta vai pra ativa; `@nome` desvia sem trocar |
-| Feedback | `"Trabalhando nisso."` após 8s, depois só a resposta final | Chat limpo |
-| API HTTP | `POST /send` + `GET /healthz` | Contrato idêntico ao que a skill `send-whatsapp` já consome |
-| Persistência | JSON em `~/.local/state/claude-wpp/` | Não há dado relacional; banco seria peso morto |
+| Language | Node 24 (ESM) | Already installed; Baileys is the best WhatsApp library and it is Node |
+| WhatsApp library | `@whiskeysockets/baileys` | Plain WebSocket, no Chromium; ~80MB of RAM against ~500MB for `whatsapp-web.js`, which still breaks whenever the WhatsApp Web DOM changes |
+| Claude driver | `claude -p` one-shot + `--resume <session_id>` | State lives in `~/.claude/projects/`, so the daemon is disposable; parallelism comes for free |
+| Permissions | `--dangerously-skip-permissions`, unrestricted cwd | There is no way to approve a permission prompt over WhatsApp |
+| Routing | Active session + `@name` prefix | A bare message goes to the active one; `@name` diverts without switching |
+| Feedback | `"Trabalhando nisso."` after 8s, then only the final answer | Keeps the chat clean |
+| HTTP API | `POST /send` + `GET /healthz` | Same contract the `send-whatsapp` skill already consumes |
+| Persistence | JSON in `~/.local/state/claude-wpp/` | There is no relational data; a database would be dead weight |
 
-### Verificações feitas antes de decidir
+### Checks made before deciding
 
-O driver do Claude foi validado empiricamente neste host, não assumido:
+The Claude driver was validated empirically on this host, not assumed:
 
-1. `claude -p '…' --output-format json` devolve `session_id` no JSON.
-2. `claude -p --resume <id> '…'` em **processo novo** recupera o contexto da
-   conversa anterior, e o `session_id` se mantém estável entre retomadas.
-3. Dois `claude -p --dangerously-skip-permissions` simultâneos executam
-   ferramentas de verdade, em paralelo, com zero `permission_denials`.
+1. `claude -p '…' --output-format json` returns `session_id` in the JSON.
+2. `claude -p --resume <id> '…'` in a **fresh process** recovers the context of
+   the previous conversation, and the `session_id` stays stable across resumes.
+3. Two simultaneous `claude -p --dangerously-skip-permissions` runs execute real
+   tools, in parallel, with zero `permission_denials`.
 
-## Arquitetura
+## Architecture
 
-Processo Node único. Módulos pequenos, uma responsabilidade cada.
+A single Node process. Small modules, one responsibility each.
 
 ```
 ~/claude-wpp/
-├── src/index.js      bootstrap, wiring, shutdown limpo
-├── src/config.js     config.json + env, validado no boot
-├── src/whatsapp.js   Baileys: conexão, QR, reconexão, sendText, onMessage
-├── src/router.js     parser de comandos (/new, @nome, texto solto)
-├── src/sessions.js   registry: criar, listar, trocar, encerrar, fila
-├── src/claude.js     spawn do `claude -p`, parse JSON, timeout, aviso de demora
+├── src/index.js      bootstrap, wiring, clean shutdown
+├── src/config.js     config.json + env, validated at boot
+├── src/whatsapp.js   Baileys: connection, QR, reconnect, sendText, onMessage
+├── src/router.js     command parser (/new, @name, bare text)
+├── src/sessions.js   registry: create, list, switch, end, queue
+├── src/claude.js     spawn of `claude -p`, JSON parse, timeout, slow notice
 ├── src/api.js        HTTP: POST /send, GET /healthz
-└── src/store.js      persistência em ~/.local/state/claude-wpp/state.json
+└── src/store.js      persistence in ~/.local/state/claude-wpp/state.json
 ```
 
-Fluxo de entrada: `whatsapp` → `router` → `sessions` → `claude` → `whatsapp`.
-A API HTTP entra direto em `whatsapp.sendText`, sem passar pelo Claude.
+Inbound flow: `whatsapp` → `router` → `sessions` → `claude` → `whatsapp`.
+The HTTP API goes straight into `whatsapp.sendText`, bypassing Claude.
 
-### Interfaces entre módulos
+### Interfaces between modules
 
 - `whatsapp`: `connect()`, `sendText(jid, text)`, `on('message', ({from, text}))`,
   `state()` → `"open" | "connecting" | "closed"`.
 - `sessions`: `create({cwd, name})`, `list()`, `get(name)`, `setActive(name)`,
-  `end(name)`, `enqueue(name, text)`. Nada de I/O de rede aqui.
+  `end(name)`, `enqueue(name, text)`. No network I/O here.
 - `claude`: `run({cwd, claudeSessionId, prompt, onSlow})` →
-  `{ result, sessionId, isError }`. Não conhece WhatsApp.
-- `store`: `load()`, `save(state)`. Só serialização.
+  `{ result, sessionId, isError }`. Knows nothing about WhatsApp.
+- `store`: `load()`, `save(state)`. Serialization only.
 
-`router` e `sessions` são funções puras sobre estado; é onde mora a maior parte
-dos testes.
+`router` and `sessions` are pure functions over state; that is where most of the
+tests live.
 
-## Sessões
+## Sessions
 
 ```js
 {
-  name: "api",                       // slug único
-  claudeSessionId: "a7b4ceaf-…",     // null até a primeira resposta
+  name: "api",                       // unique slug
+  claudeSessionId: "a7b4ceaf-…",     // null until the first answer
   cwd: "/home/user/work/api",
   createdAt, lastActivityAt,
   busy: false,
-  queue: []                          // mensagens chegadas durante execução
+  queue: []                          // messages that arrived during execution
 }
 ```
 
-Estado global: `{ sessions: [...], activeSession: "api" }`, salvo a cada mutação.
+Global state: `{ sessions: [...], activeSession: "api" }`, saved on every
+mutation.
 
-Em disco fica apenas o ponteiro `claudeSessionId` — o histórico real pertence ao
-Claude Code, em `~/.claude/projects/`. Consequência: o daemon pode cair,
-reiniciar ou ser atualizado sem perder nenhuma conversa.
+Only the `claudeSessionId` pointer is kept on disk — the real history belongs to
+Claude Code, in `~/.claude/projects/`. Consequence: the daemon can crash, restart
+or be upgraded without losing a single conversation.
 
-Uma sessão ocupada enfileira as mensagens seguintes e as processa em ordem — não
-é possível retomar a mesma sessão em dois processos ao mesmo tempo. Sessões
-distintas rodam de fato em paralelo.
+A busy session queues the following messages and processes them in order — the
+same session cannot be resumed in two processes at once. Distinct sessions do run
+in parallel.
 
-### Comandos
+### Commands
 
-| Comando | Efeito |
+| Command | Effect |
 |---|---|
-| `/new [dir] [nome]` | Cria e ativa. `dir` default `~`, nome auto (`s1`, `s2`…) |
-| `/ls` | Lista: nome, cwd, qual é a ativa, ociosidade, se está ocupada |
-| `/use <nome>` | Troca a sessão ativa |
-| `/end [nome]` | Encerra (esquece o ponteiro); sem nome, encerra a ativa |
-| `/stop` | Mata o processo em execução da sessão ativa |
-| `/help` | Lista os comandos |
-| `@nome texto` | Envia para `nome` sem trocar a ativa |
-| *texto solto* | Vai para a sessão ativa; cria uma se não houver nenhuma |
+| `/new [dir] [name]` | Creates and activates. `dir` defaults to `~`, name auto (`s1`, `s2`…) |
+| `/ls` | Lists: name, cwd, which one is active, idle time, whether it is busy |
+| `/use <name>` | Switches the active session |
+| `/end [name]` | Ends it (forgets the pointer); with no name, ends the active one |
+| `/stop` | Kills the running process of the active session |
+| `/help` | Lists the commands |
+| `@name text` | Sends to `name` without switching the active one |
+| *bare text* | Goes to the active session; creates one if there is none |
 
-Toda resposta é prefixada com `[nome]`. Com sessões paralelas as respostas
-chegam fora de ordem, e o prefixo é o que identifica a origem.
+Every reply is prefixed with `[name]`. With parallel sessions the answers arrive
+out of order, and the prefix is what identifies the origin.
 
-`/end` esquece o ponteiro mas não apaga nada em `~/.claude/projects/` — a
-operação é barata e reversível.
+`/end` forgets the pointer but deletes nothing under `~/.claude/projects/` — the
+operation is cheap and reversible.
 
-## Execução do Claude
+## Running Claude
 
 ```
 spawn('claude', [
-  '-p', texto,
+  '-p', text,
   '--output-format', 'json',
   '--dangerously-skip-permissions',
   ...(claudeSessionId ? ['--resume', claudeSessionId] : [])
 ], { cwd })
 ```
 
-- Sem `session_id` ainda, omite `--resume` e grava o id que voltar no JSON.
-- **8 segundos** sem terminar dispara `"Trabalhando nisso."`, uma única vez por
-  mensagem.
-- Timeout duro de **15 minutos**: mata o processo e responde o erro.
-- Resposta acima de ~3.500 caracteres é quebrada em várias mensagens, cortando
-  em quebras de linha.
-- `is_error: true` ou JSON inválido no stdout viram uma mensagem de erro legível,
-  com o stderr truncado.
+- With no `session_id` yet, omit `--resume` and record the id the JSON returns.
+- **8 seconds** without finishing triggers `"Trabalhando nisso."`, once per
+  message.
+- Hard timeout of **15 minutes**: kills the process and replies with the error.
+- An answer above ~3,500 characters is split into several messages, cutting at
+  line breaks.
+- `is_error: true` or invalid JSON on stdout becomes a readable error message,
+  with stderr truncated.
 
 ## WhatsApp
 
-Baileys com `useMultiFileAuthState` em `~/.local/state/claude-wpp/wa-auth`.
+Baileys with `useMultiFileAuthState` in `~/.local/state/claude-wpp/wa-auth`.
 
-Pareamento uma única vez: `npm run pair` em foreground imprime o QR no terminal,
-lido pelo aparelho **+55 11 92222-2222**. As credenciais ficam salvas e o daemon
-passa a subir sozinho.
+Pairing happens once: `npm run pair` in the foreground prints the QR code in the
+terminal, scanned by the **+55 11 92222-2222** device. The credentials are saved
+and the daemon starts on its own from then on.
 
-Reconexão automática em queda de conexão. A única condição que para o serviço de
-vez é `DisconnectReason.loggedOut` — aí é preciso parear de novo.
+Automatic reconnect when the connection drops. The only condition that stops the
+service for good is `DisconnectReason.loggedOut` — then it has to be paired
+again.
 
-### Autorização
+### Authorization
 
-O serviço responde **exclusivamente** ao número **+55 11 91111-1111**.
+The service answers **exclusively** to the number **+55 11 91111-1111**.
 
-Grupos, mensagens próprias (`fromMe`) e qualquer outro remetente são descartados
-em silêncio: log em nível debug, nenhuma resposta. Não confirmar a existência do
-serviço para um remetente não autorizado é deliberado.
+Groups, own messages (`fromMe`) and any other sender are silently dropped: a
+debug-level log, no reply. Not confirming the existence of the service to an
+unauthorized sender is deliberate.
 
-A comparação de números normaliza o JID antes de comparar — reduz a apenas
-dígitos e tolera o nono dígito de celular brasileiro, além do formato `@lid` que
-versões recentes do Baileys entregam no lugar de `@s.whatsapp.net`.
+Number comparison normalizes the JID first — reduces it to digits only and
+tolerates the ninth digit of Brazilian mobile numbers, as well as the `@lid`
+format that recent Baileys versions deliver instead of `@s.whatsapp.net`.
 
-## API HTTP
+## HTTP API
 
-`node:http` puro, sem framework, ouvindo em `127.0.0.1:8787`.
+Plain `node:http`, no framework, listening on `127.0.0.1:8787`.
 
 ```
 POST /send
@@ -163,48 +165,49 @@ GET /healthz
   → 200 { "ok": true, "wa": "open", "sessions": 2 }
 ```
 
-O token é o mesmo já usado pela skill `send-whatsapp`, que volta a funcionar sem
-alteração. `/healthz` não exige token; `/send` exige.
+The token is the same one already used by the `send-whatsapp` skill, which keeps
+working unchanged. `/healthz` requires no token; `/send` does.
 
 ## systemd
 
-`~/.config/systemd/user/claude-wpp.service`, com `Restart=always` e
+`~/.config/systemd/user/claude-wpp.service`, with `Restart=always` and
 `RestartSec=5`.
 
-Caminhos absolutos, resolvidos na instalação — o ambiente do systemd não tem os
-shims do asdf:
+Absolute paths, resolved at install time — the systemd environment does not have
+the asdf shims:
 
 - node: `/home/user/.asdf/installs/nodejs/24.15.0/bin/node`
-- claude: `/home/user/.local/bin/claude` (symlink estável; a versão por baixo
-  muda a cada atualização). O `PATH` do serviço inclui `~/.local/bin`.
+- claude: `/home/user/.local/bin/claude` (a stable symlink; the version
+  underneath changes on every update). The service `PATH` includes
+  `~/.local/bin`.
 
-Requer **`sudo loginctl enable-linger $USER`**. Sem linger, o serviço morre no
-logout e não sobe no boot. É o único comando com sudo do projeto.
+Requires **`sudo loginctl enable-linger $USER`**. Without linger the service dies
+at logout and does not start at boot. It is the only sudo command in the project.
 
-## Testes
+## Tests
 
-TDD em `sessions`, `router` e `store` com `node:test`: parser de comandos, ciclo
-de vida da sessão, fila de mensagens, persistência e recuperação de estado.
+TDD on `sessions`, `router` and `store` with `node:test`: command parser, session
+lifecycle, message queue, persistence and state recovery.
 
-`claude.js` é testado contra um executável `claude` falso, injetado no `PATH` do
-teste, que ecoa um JSON controlado. Verifica as flags montadas, a presença e a
-ausência de `--resume`, o comportamento de timeout e o disparo do
+`claude.js` is tested against a fake `claude` executable, injected into the test
+`PATH`, which echoes a controlled JSON. It checks the assembled flags, the
+presence and absence of `--resume`, the timeout behaviour and the firing of
 `"Trabalhando nisso."`.
 
-`whatsapp.js` e `api.js` ficam em smoke manual. Mockar o Baileys custa mais do
-que o teste entregaria.
+`whatsapp.js` and `api.js` are left to manual smoke testing. Mocking Baileys
+costs more than the test would deliver.
 
-## Fora de escopo
+## Out of scope
 
-Múltiplos números autorizados, multi-usuário, streaming de progresso por
-ferramenta, interface web, banco de dados, Docker.
+Multiple authorized numbers, multi-user, per-tool progress streaming, web
+interface, database, Docker.
 
-## Risco aceito
+## Accepted risk
 
-Bypass de permissão com diretório livre significa que qualquer mensagem vinda do
-número autorizado executa comandos reais nesta máquina, com o usuário do serviço e
-sem confirmação. Quem controlar aquele WhatsApp tem shell aqui.
+Permission bypass with an unrestricted directory means any message from the
+authorized number runs real commands on this machine, as the service user and
+without confirmation. Whoever controls that WhatsApp account has a shell here.
 
-A decisão foi tomada de forma consciente pelo dono do host. As mitigações que
-existem: um único número autorizado, API presa a `127.0.0.1`, e nada de
-resposta a remetente desconhecido.
+The decision was made knowingly by the host owner. The mitigations that exist: a
+single authorized number, the API bound to `127.0.0.1`, and no reply at all to an
+unknown sender.

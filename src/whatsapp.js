@@ -6,7 +6,7 @@ import { sameNumber, senderNumber, normalizeNumber } from './numbers.js'
 const makeWASocket = baileys.makeWASocket ?? baileys.default
 const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = baileys
 
-// O Baileys espera um logger no formato do pino. Evitamos a dependência.
+// Baileys expects a pino-shaped logger. We avoid the dependency.
 const loggerMudo = {
   level: 'silent',
   trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {},

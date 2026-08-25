@@ -19,9 +19,9 @@ export function runClaude({
     let out = ''
     let err = ''
 
-    // detached cria um grupo de processos próprio. O claude gera filhos (Bash,
-    // subagentes); matar só o pai deixa netos órfãos segurando o stdout aberto,
-    // e o evento close nunca chega. Matamos o grupo inteiro.
+    // detached gives the child its own process group. claude spawns children
+    // (Bash, subagents); killing only the parent leaves orphaned grandchildren
+    // holding stdout open, and the close event never fires. Kill the group.
     const child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], detached: true })
 
     const matarGrupo = () => {

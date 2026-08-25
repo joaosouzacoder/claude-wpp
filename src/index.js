@@ -19,9 +19,9 @@ async function main() {
   const store = createStore(join(config.stateDir, 'state.json'))
   const sessions = createSessions({ store, defaultCwd: config.defaultCwd })
 
-  // whatsapp e handler se referenciam: o adaptador entrega a mensagem ao
-  // handler, o handler responde pelo adaptador. A seta abaixo é preguiçosa,
-  // então `handler` já existe quando a primeira mensagem chega.
+  // whatsapp and handler reference each other: the adapter delivers the message
+  // to the handler, the handler replies through the adapter. The arrow below is
+  // lazy, so `handler` already exists when the first message arrives.
   const whatsapp = createWhatsapp({
     authDir: join(config.stateDir, 'wa-auth'),
     authorizedNumber: config.authorizedNumber,
