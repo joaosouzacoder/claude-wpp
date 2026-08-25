@@ -1,0 +1,11 @@
+# Every change requires a review from the maintainer.
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+*                       @joaosouzacoder
+
+# The security posture of this project lives in these files. Treat changes to
+# them as security review, not routine review.
+/SECURITY.md            @joaosouzacoder
+/src/whatsapp.js        @joaosouzacoder
+/src/numbers.js         @joaosouzacoder
+/src/api.js             @joaosouzacoder
+/src/claude.js          @joaosouzacoder

@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose a change in behaviour
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This project has a deliberately narrow scope. Multiple authorized
+        numbers, multi-user support, per-tool progress streaming, a web
+        interface, a database and Docker were considered and rejected — see
+        *Out of scope* in the design spec. Proposals in those areas need to
+        argue against the original reasoning, not just restate the want.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you unable to do today? Describe the situation, not the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: What should happen instead, concretely.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried or considered
+      description: Workarounds, other designs, and why they fall short.
+
+  - type: dropdown
+    id: security
+    attributes:
+      label: Does this touch authorization, number matching, the HTTP API or process spawning?
+      options:
+        - "No"
+        - "Yes — and I have read SECURITY.md"
+    validations:
+      required: true

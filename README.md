@@ -1,8 +1,16 @@
 # claude-wpp
 
+[![CI](https://github.com/joaosouzacoder/claude-wpp/actions/workflows/ci.yml/badge.svg)](https://github.com/joaosouzacoder/claude-wpp/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D24-brightgreen.svg)](package.json)
+
 Claude Code over WhatsApp, with several parallel sessions, using the
 subscription already authenticated on this host. It does not consume the paid
 API.
+
+> **Read [SECURITY.md](SECURITY.md) before deploying.** The service runs Claude
+> with permission checks disabled: whoever controls the authorized WhatsApp
+> account has a shell on your machine.
 
 ## Install
 
@@ -82,3 +90,24 @@ The service runs Claude with `--dangerously-skip-permissions` and an unrestricte
 working directory. Whoever has access to the authorized WhatsApp number runs
 commands on this machine as your user. Only the number configured in
 `authorizedNumber` is served; any other sender is silently ignored.
+
+The full threat model — what this protects against and what it does not — is in
+[SECURITY.md](SECURITY.md).
+
+## Contributing
+
+Bug reports and pull requests are welcome. Start with
+[CONTRIBUTING.md](CONTRIBUTING.md); the scope of the project is deliberately
+narrow, and the *Out of scope* section of the
+[design spec](docs/superpowers/specs/2026-08-22-claude-wpp-design.md) says what
+was already considered and rejected.
+
+Participation is covered by the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+Never commit real phone numbers, e-mail addresses or absolute home paths — CI
+fails the build if one shows up. Use the placeholders documented in
+CONTRIBUTING.md.
+
+## License
+
+[MIT](LICENSE) © João Souza

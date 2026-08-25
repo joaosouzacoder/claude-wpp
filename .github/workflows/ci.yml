@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["24", "25"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+  no-personal-data:
+    # This repo had its history rewritten once to remove real phone numbers and
+    # an e-mail address. Fail the build rather than let one back in.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan the tree for personal data
+        run: |
+          set -uo pipefail
+          fail=0
+          # Only git-tracked files: that is exactly what a contributor commits.
+          files=$(git ls-files | grep -v '^package-lock.json$')
+
+          # Any Brazilian mobile that is not one of the documented placeholders.
+          if printf '%s\n' "$files" | xargs -r grep -InoE '\b55[0-9]{10,11}\b' \
+             | grep -vE ':(5511911111111|5511922222222|551111111111|5521911111111|5511999999999)$'; then
+            echo "::error::Found a phone number that is not a documented placeholder."
+            fail=1
+          fi
+
+          if printf '%s\n' "$files" | xargs -r grep -InE '[a-zA-Z0-9._%+-]+@(gmail|hotmail|outlook|yahoo|icloud)\.[a-z]+'; then
+            echo "::error::Found a personal e-mail address. Use fulano@example.com."
+            fail=1
+          fi
+
+          if printf '%s\n' "$files" | xargs -r grep -InoE '/home/[a-z0-9_-]+' \
+             | grep -v ':/home/user$'; then
+            echo "::error::Found an absolute home path. Use %h or /home/user."
+            fail=1
+          fi
+
+          exit $fail

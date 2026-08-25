@@ -1,0 +1,65 @@
+name: Bug report
+description: Something behaves differently from what the docs say
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste real phone numbers, tokens or `journalctl` output that
+        contains them. Redact before posting — this repository is public.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The actual behaviour, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The exact messages or commands, in order.
+      placeholder: |
+        1. Send `/new ~/work/api api`
+        2. Send `list the failing tests`
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: >-
+        From `journalctl --user -u claude-wpp -n 100`. Redact numbers and
+        tokens. This is rendered as a code block automatically.
+      render: shell
+
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: Output of `node --version`
+      placeholder: v24.15.0
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: Ubuntu 24.04
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I redacted phone numbers and tokens from everything above
+          required: true
+        - label: I searched the existing issues
+          required: true

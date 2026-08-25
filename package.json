@@ -1,6 +1,26 @@
 {
   "name": "claude-wpp",
   "version": "1.0.0",
+  "description": "Claude Code over WhatsApp, with parallel sessions, using the subscription already authenticated on the host.",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "whatsapp",
+    "baileys",
+    "cli",
+    "bot",
+    "ai-agent"
+  ],
+  "homepage": "https://github.com/joaosouzacoder/claude-wpp#readme",
+  "bugs": {
+    "url": "https://github.com/joaosouzacoder/claude-wpp/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joaosouzacoder/claude-wpp.git"
+  },
+  "license": "MIT",
+  "author": "João Souza (https://github.com/joaosouzacoder)",
   "private": true,
   "type": "module",
   "engines": {
