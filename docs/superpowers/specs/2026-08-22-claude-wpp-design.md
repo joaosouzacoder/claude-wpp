@@ -178,7 +178,7 @@ shims do asdf:
 - claude: `/home/user/.local/bin/claude` (symlink estável; a versão por baixo
   muda a cada atualização). O `PATH` do serviço inclui `~/.local/bin`.
 
-Requer **`sudo loginctl enable-linger user`**. Sem linger, o serviço morre no
+Requer **`sudo loginctl enable-linger $USER`**. Sem linger, o serviço morre no
 logout e não sobe no boot. É o único comando com sudo do projeto.
 
 ## Testes
@@ -202,7 +202,7 @@ ferramenta, interface web, banco de dados, Docker.
 ## Risco aceito
 
 Bypass de permissão com diretório livre significa que qualquer mensagem vinda do
-número autorizado executa comandos reais nesta máquina, com o usuário `user` e
+número autorizado executa comandos reais nesta máquina, com o usuário do serviço e
 sem confirmação. Quem controlar aquele WhatsApp tem shell aqui.
 
 A decisão foi tomada de forma consciente pelo dono do host. As mitigações que

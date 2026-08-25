@@ -2148,7 +2148,7 @@ Estes passos exigem o João presente e não podem ser executados por um agente:
 
 1. `cp config.example.json config.json` e preencher o `apiToken` com o token que
    a skill `send-whatsapp` já usa.
-2. `sudo loginctl enable-linger user` — pede senha.
+2. `sudo loginctl enable-linger $USER` — pede senha.
 3. `npm run pair` e ler o QR com o aparelho **+55 11 92222-2222**.
 4. `systemctl --user start claude-wpp` e mandar um `oi` do **+55 11 91111-1111`**
    para confirmar ponta a ponta.

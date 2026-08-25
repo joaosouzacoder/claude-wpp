@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
 import { loadConfig } from '../src/config.js'
 
+const MINIMO = { apiToken: 'abc', authorizedNumber: '5511911111111', botNumber: '5511922222222' }
+
 function fixture(obj) {
   const dir = mkdtempSync(join(tmpdir(), 'cfg-'))
   const path = join(dir, 'config.json')
@@ -12,8 +14,8 @@ function fixture(obj) {
   return path
 }
 
-test('aplica os defaults quando o arquivo só traz o token', () => {
-  const cfg = loadConfig({ path: fixture({ apiToken: 'abc' }), env: {} })
+test('aplica os defaults quando o arquivo só traz o obrigatório', () => {
+  const cfg = loadConfig({ path: fixture(MINIMO), env: {} })
   assert.equal(cfg.apiToken, 'abc')
   assert.equal(cfg.authorizedNumber, '5511911111111')
   assert.equal(cfg.apiHost, '127.0.0.1')
@@ -27,13 +29,13 @@ test('aplica os defaults quando o arquivo só traz o token', () => {
 })
 
 test('o arquivo sobrescreve os defaults', () => {
-  const cfg = loadConfig({ path: fixture({ apiToken: 'abc', apiPort: 9999 }), env: {} })
+  const cfg = loadConfig({ path: fixture({ ...MINIMO, apiPort: 9999 }), env: {} })
   assert.equal(cfg.apiPort, 9999)
 })
 
 test('a variável de ambiente vence o arquivo', () => {
   const cfg = loadConfig({
-    path: fixture({ apiToken: 'abc', apiPort: 9999 }),
+    path: fixture({ ...MINIMO, apiPort: 9999 }),
     env: { CLAUDE_WPP_API_PORT: '7777', CLAUDE_WPP_API_TOKEN: 'do-env' },
   })
   assert.equal(cfg.apiPort, 7777)
@@ -42,8 +44,19 @@ test('a variável de ambiente vence o arquivo', () => {
 
 test('falha explicitamente quando não há token', () => {
   assert.throws(
-    () => loadConfig({ path: fixture({}), env: {} }),
+    () => loadConfig({ path: fixture({ ...MINIMO, apiToken: null }), env: {} }),
     /apiToken/,
+  )
+})
+
+test('falha explicitamente quando falta o número autorizado ou o do bot', () => {
+  assert.throws(
+    () => loadConfig({ path: fixture({ ...MINIMO, authorizedNumber: null }), env: {} }),
+    /authorizedNumber/,
+  )
+  assert.throws(
+    () => loadConfig({ path: fixture({ ...MINIMO, botNumber: null }), env: {} }),
+    /botNumber/,
   )
 })
 

@@ -5,11 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/user/claude-wpp
-Environment=PATH=/home/user/.local/bin:/usr/local/bin:/usr/bin:/bin
-Environment=HOME=/home/user
+WorkingDirectory=%h/claude-wpp
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HOME=%h
 Environment=NODE_ENV=production
-ExecStart=/home/user/.asdf/installs/nodejs/24.15.0/bin/node /home/user/claude-wpp/src/index.js
+ExecStart=%h/.asdf/installs/nodejs/24.15.0/bin/node %h/claude-wpp/src/index.js
 Restart=always
 RestartSec=5
 StandardOutput=journal

@@ -3,8 +3,6 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const DEFAULTS = {
-  authorizedNumber: '5511911111111',
-  botNumber: '5511922222222',
   apiHost: '127.0.0.1',
   apiPort: 8787,
   apiToken: null,
@@ -39,7 +37,9 @@ export function loadConfig({ path = join(homedir(), 'claude-wpp', 'config.json')
     if (env[key] != null && env[key] !== '') cfg[field] = cast(env[key])
   }
 
-  if (!cfg.apiToken) throw new Error('config inválido: apiToken é obrigatório')
+  for (const campo of ['apiToken', 'authorizedNumber', 'botNumber']) {
+    if (!cfg[campo]) throw new Error(`config inválido: ${campo} é obrigatório`)
+  }
 
   return cfg
 }
