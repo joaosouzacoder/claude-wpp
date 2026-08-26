@@ -66,3 +66,36 @@ test('falha explicitamente quando o arquivo não existe', () => {
     /config/i,
   )
 })
+
+test('mídia tem defaults e mediaDir sai do stateDir', () => {
+  const cfg = loadConfig({ path: fixture(MINIMO), env: {} })
+  assert.equal(cfg.openaiApiKey, null)
+  assert.equal(cfg.transcribeModel, 'gpt-4o-transcribe')
+  assert.equal(cfg.transcribeTimeoutMs, 120000)
+  assert.equal(cfg.mediaDir, join(cfg.stateDir, 'media'))
+})
+
+test('mediaDir acompanha um stateDir customizado', () => {
+  const cfg = loadConfig({ path: fixture({ ...MINIMO, stateDir: '/var/claude-wpp' }), env: {} })
+  assert.equal(cfg.mediaDir, join('/var/claude-wpp', 'media'))
+})
+
+test('mediaDir explícito no arquivo vence o derivado do stateDir', () => {
+  const cfg = loadConfig({ path: fixture({ ...MINIMO, mediaDir: '/mnt/midia' }), env: {} })
+  assert.equal(cfg.mediaDir, '/mnt/midia')
+})
+
+test('a chave da OpenAI pode vir do arquivo ou do ambiente', () => {
+  const doArquivo = loadConfig({ path: fixture({ ...MINIMO, openaiApiKey: 'sk-arquivo' }), env: {} })
+  assert.equal(doArquivo.openaiApiKey, 'sk-arquivo')
+
+  const doEnv = loadConfig({
+    path: fixture({ ...MINIMO, openaiApiKey: 'sk-arquivo' }),
+    env: { OPENAI_API_KEY: 'sk-env' },
+  })
+  assert.equal(doEnv.openaiApiKey, 'sk-env')
+})
+
+test('a chave da OpenAI não é obrigatória: sem ela o serviço ainda sobe', () => {
+  assert.doesNotThrow(() => loadConfig({ path: fixture(MINIMO), env: {} }))
+})

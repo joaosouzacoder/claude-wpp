@@ -1,5 +1,6 @@
 {
   "apiToken": "troque-por-um-token-forte",
   "authorizedNumber": "5511911111111",
-  "botNumber": "5511922222222"
+  "botNumber": "5511922222222",
+  "openaiApiKey": null
 }

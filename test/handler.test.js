@@ -1,23 +1,41 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createStore } from '../src/store.js'
 import { createSessions } from '../src/sessions.js'
 import { createHandler } from '../src/handler.js'
+import { transcribe as transcribeReal } from '../src/transcribe.js'
 
-function montar({ run } = {}) {
+function montar({ run, transcribe, config } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'handler-'))
   const sessions = createSessions({ store: createStore(join(dir, 'state.json')), defaultCwd: dir })
   const ditos = []
   const handler = createHandler({
     sessions,
     run: run ?? (async () => ({ ok: true, text: 'resposta', sessionId: 'sid-1', error: null })),
+    transcribe: transcribe ?? (async () => ({ ok: true, text: 'transcrição do áudio', error: null })),
     reply: async (t) => { ditos.push(t) },
-    config: { slowNoticeMs: 10, timeoutMs: 1000, maxMessageChars: 50, claudeBin: 'claude', defaultCwd: dir },
+    config: {
+      slowNoticeMs: 10,
+      timeoutMs: 1000,
+      maxMessageChars: 50,
+      claudeBin: 'claude',
+      defaultCwd: dir,
+      openaiApiKey: 'sk-teste',
+      transcribeModel: 'gpt-4o-transcribe',
+      transcribeTimeoutMs: 1000,
+      ...config,
+    },
   })
   return { handler, sessions, ditos, dir }
+}
+
+function arquivoFalso(dir, nome) {
+  const caminho = join(dir, nome)
+  writeFileSync(caminho, 'bytes')
+  return caminho
 }
 
 test('mensagem sem sessão cria uma automaticamente', async () => {
@@ -193,4 +211,167 @@ test('/stop sem nada rodando avisa', async () => {
   await handler.handle(`/new ${dir} a`)
   await handler.handle('/stop')
   assert.match(ditos.at(-1), /nada/i)
+})
+
+test('mensagem em objeto sem mídia se comporta como texto puro', async () => {
+  const prompts = []
+  const { handler } = montar({
+    run: async ({ prompt }) => {
+      prompts.push(prompt)
+      return { ok: true, text: 'ok', sessionId: 'sid-1', error: null }
+    },
+  })
+  await handler.handle({ text: 'oi claude', media: null })
+  assert.deepEqual(prompts, ['oi claude'])
+})
+
+test('imagem com legenda manda a legenda e o caminho para o claude', async () => {
+  const prompts = []
+  const { handler, dir } = montar({
+    run: async ({ prompt }) => {
+      prompts.push(prompt)
+      return { ok: true, text: 'ok', sessionId: 'sid-1', error: null }
+    },
+  })
+  const caminho = arquivoFalso(dir, 'foto.jpg')
+
+  await handler.handle({ text: 'que erro é esse?', media: { kind: 'image', path: caminho } })
+
+  assert.match(prompts[0], /que erro é esse\?/)
+  assert.ok(prompts[0].includes(caminho))
+})
+
+test('imagem sem legenda ainda chega ao claude com um pedido padrão', async () => {
+  const prompts = []
+  const { handler, dir } = montar({
+    run: async ({ prompt }) => {
+      prompts.push(prompt)
+      return { ok: true, text: 'ok', sessionId: 'sid-1', error: null }
+    },
+  })
+  const caminho = arquivoFalso(dir, 'foto.jpg')
+
+  await handler.handle({ text: '', media: { kind: 'image', path: caminho } })
+
+  assert.equal(prompts.length, 1)
+  assert.ok(prompts[0].includes(caminho))
+})
+
+test('imagem com legenda @sessao roteia para a sessão indicada', async () => {
+  const { handler, sessions, ditos, dir } = montar()
+  await handler.handle(`/new ${dir} a`)
+  await handler.handle(`/new ${dir} b`)
+
+  await handler.handle({ text: '@a olha isso', media: { kind: 'image', path: arquivoFalso(dir, 'foto.jpg') } })
+
+  assert.equal(sessions.active().name, 'b')
+  assert.equal(ditos.at(-1), '[a] resposta')
+})
+
+test('imagem é preservada em disco para o claude poder ler', async () => {
+  const { handler, dir } = montar()
+  const caminho = arquivoFalso(dir, 'foto.jpg')
+
+  await handler.handle({ text: 'olha', media: { kind: 'image', path: caminho } })
+
+  assert.ok(existsSync(caminho))
+})
+
+test('imagem colada num comando não atrapalha o comando', async () => {
+  const { handler, ditos, dir } = montar()
+
+  await handler.handle({ text: '/help', media: { kind: 'image', path: arquivoFalso(dir, 'foto.jpg') } })
+
+  assert.match(ditos.at(-1), /\/new/)
+})
+
+test('áudio é transcrito e a transcrição vira o prompt', async () => {
+  const prompts = []
+  const { handler, dir, ditos } = montar({
+    run: async ({ prompt }) => {
+      prompts.push(prompt)
+      return { ok: true, text: 'ok', sessionId: 'sid-1', error: null }
+    },
+    transcribe: async () => ({ ok: true, text: 'roda os testes', error: null }),
+  })
+
+  await handler.handle({ text: '', media: { kind: 'audio', path: arquivoFalso(dir, 'audio.ogg') } })
+
+  assert.deepEqual(prompts, ['roda os testes'])
+  assert.equal(ditos.at(-1), '[s1] ok')
+})
+
+test('áudio recebe a chave e o modelo vindos do config', async () => {
+  let visto = null
+  const { handler, dir } = montar({
+    transcribe: async (opts) => {
+      visto = opts
+      return { ok: true, text: 'oi', error: null }
+    },
+    config: { openaiApiKey: 'sk-do-config', transcribeModel: 'whisper-1', transcribeTimeoutMs: 4321 },
+  })
+  const caminho = arquivoFalso(dir, 'audio.ogg')
+
+  await handler.handle({ text: '', media: { kind: 'audio', path: caminho } })
+
+  assert.equal(visto.path, caminho)
+  assert.equal(visto.apiKey, 'sk-do-config')
+  assert.equal(visto.model, 'whisper-1')
+  assert.equal(visto.timeoutMs, 4321)
+})
+
+test('áudio transcrito como comando é executado como comando', async () => {
+  const { handler, ditos } = montar({
+    transcribe: async () => ({ ok: true, text: '/help', error: null }),
+  })
+
+  await handler.handle({ text: '', media: { kind: 'audio', path: arquivoFalso(montar().dir, 'audio.ogg') } })
+
+  assert.match(ditos.at(-1), /\/new/)
+})
+
+test('áudio é apagado do disco depois de transcrito', async () => {
+  const { handler, dir } = montar()
+  const caminho = arquivoFalso(dir, 'audio.ogg')
+
+  await handler.handle({ text: '', media: { kind: 'audio', path: caminho } })
+
+  assert.equal(existsSync(caminho), false)
+})
+
+test('transcrição que falha avisa o motivo e não chama o claude', async () => {
+  let chamou = false
+  const { handler, ditos, dir } = montar({
+    run: async () => { chamou = true },
+    transcribe: async () => ({ ok: false, text: '', error: 'a OpenAI respondeu 429' }),
+  })
+
+  await handler.handle({ text: '', media: { kind: 'audio', path: arquivoFalso(dir, 'audio.ogg') } })
+
+  assert.equal(chamou, false)
+  assert.match(ditos.at(-1), /429/)
+})
+
+test('áudio é apagado do disco mesmo quando a transcrição falha', async () => {
+  const { handler, dir } = montar({
+    transcribe: async () => ({ ok: false, text: '', error: 'deu ruim' }),
+  })
+  const caminho = arquivoFalso(dir, 'audio.ogg')
+
+  await handler.handle({ text: '', media: { kind: 'audio', path: caminho } })
+
+  assert.equal(existsSync(caminho), false)
+})
+
+test('sem chave da OpenAI o áudio avisa que falta a chave e o texto segue funcionando', async () => {
+  const { handler, ditos, dir } = montar({
+    transcribe: transcribeReal,
+    config: { openaiApiKey: null },
+  })
+
+  await handler.handle({ text: '', media: { kind: 'audio', path: arquivoFalso(dir, 'audio.ogg') } })
+  assert.match(ditos.at(-1), /chave/i)
+
+  await handler.handle('e o texto?')
+  assert.equal(ditos.at(-1), '[s1] resposta')
 })

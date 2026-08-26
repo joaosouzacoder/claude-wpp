@@ -6,6 +6,7 @@ import { createHandler } from './handler.js'
 import { createWhatsapp } from './whatsapp.js'
 import { createApi } from './api.js'
 import { runClaude } from './claude.js'
+import { transcribe } from './transcribe.js'
 
 const log = {
   info: (m) => console.log(`[info] ${m}`),
@@ -24,14 +25,16 @@ async function main() {
   // lazy, so `handler` already exists when the first message arrives.
   const whatsapp = createWhatsapp({
     authDir: join(config.stateDir, 'wa-auth'),
+    mediaDir: config.mediaDir,
     authorizedNumber: config.authorizedNumber,
-    onMessage: (texto) => handler.handle(texto).catch((e) => log.error(e.stack ?? e.message)),
+    onMessage: (msg) => handler.handle(msg).catch((e) => log.error(e.stack ?? e.message)),
     log,
   })
 
   const handler = createHandler({
     sessions,
     run: runClaude,
+    transcribe,
     reply: (texto) => whatsapp.sendText(config.authorizedNumber, texto),
     config,
   })

@@ -36,6 +36,33 @@ systemctl --user start claude-wpp
 | `/help` | lists the commands |
 | `@name text` | sends to another session without switching the active one |
 | bare text | goes to the active session |
+| voice note or audio | transcribed, then treated as if you had typed it |
+| image | forwarded to Claude; the caption is the prompt |
+
+## Audio and images
+
+A voice note is transcribed by the OpenAI transcription API and then follows the
+exact same path as typed text — so `/ls` and `@session do this` work dictated.
+The audio file is deleted as soon as the transcript comes back.
+
+An image is written to `~/.local/state/claude-wpp/media/` and its path goes into
+the prompt; Claude reads the file with its own `Read` tool. The caption is the
+prompt, and `@session` in the caption routes it. Without a caption the bot asks
+Claude to analyse the image. Images are kept on disk so Claude can revisit them
+later in the session — prune that directory if it grows.
+
+Audio needs an OpenAI key, in `openaiApiKey` or in `OPENAI_API_KEY`. **This is
+the one part of the project that talks to a paid third-party API**, and it is
+optional: without a key, audio replies with the reason and everything else keeps
+working. Video, documents and stickers are still ignored — only the caption of a
+video is read, as before.
+
+| Key | Default | What it does |
+|---|---|---|
+| `openaiApiKey` | `null` | key for the transcription API; audio is off without it |
+| `transcribeModel` | `gpt-4o-transcribe` | transcription model |
+| `transcribeTimeoutMs` | `120000` | gives up on a transcription after this |
+| `mediaDir` | `<stateDir>/media` | where received media is written |
 
 When something takes longer than 8 seconds, the bot replies `Trabalhando nisso.`
 once and sends the result afterwards. Every reply is prefixed with

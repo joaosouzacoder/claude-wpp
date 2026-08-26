@@ -45,6 +45,19 @@ SIM swap is a full host compromise, not a messaging inconvenience.
 - **No credentials in the repo.** `config.json` is gitignored; the WhatsApp
   session state lives in `~/.local/state/claude-wpp/` and never enters the tree.
 
+### Audio transcription sends data to a third party
+
+Audio support is the only feature that leaves the host. If `openaiApiKey` is
+set, every voice note received is uploaded to the OpenAI transcription API, and
+is therefore subject to OpenAI's retention and processing terms rather than
+this project's. The upload happens only after the sender has been checked
+against `authorizedNumber`, and the local copy is deleted as soon as the
+transcript returns — but the transcript itself becomes a Claude prompt, so
+treat a dictated instruction exactly like a typed one.
+
+Leave `openaiApiKey` unset to keep audio off and the host silent. Images are
+never uploaded anywhere: they stay on local disk and Claude reads them there.
+
 ### What it does not protect against
 
 - A compromised authorized WhatsApp account.

@@ -1,5 +1,7 @@
+import { rmSync } from 'node:fs'
 import { parse } from './router.js'
 import { chunkText } from './text.js'
+import { promptComImagem } from './media.js'
 
 const AJUDA = [
   'Comandos:',
@@ -10,6 +12,9 @@ const AJUDA = [
   '/stop — interrompe o que a sessão ativa está fazendo',
   '/help — isto aqui',
   '@nome texto — manda pra outra sessão sem trocar a ativa',
+  '',
+  'Áudio vira texto e segue como se você tivesse digitado (comandos inclusive).',
+  'Imagem vai junto do pedido; a legenda é o prompt.',
 ].join('\n')
 
 function ociosidade(iso) {
@@ -20,7 +25,7 @@ function ociosidade(iso) {
   return `${Math.floor(min / 60)}h`
 }
 
-export function createHandler({ sessions, run, reply, config }) {
+export function createHandler({ sessions, run, transcribe, reply, config }) {
   async function responder(nome, texto) {
     for (const pedaco of chunkText(texto, config.maxMessageChars)) {
       await reply(`[${nome}] ${pedaco}`)
@@ -120,7 +125,31 @@ export function createHandler({ sessions, run, reply, config }) {
     },
   }
 
-  async function handle(texto) {
+  // Audio only exists to become text: transcribe, drop the file, then follow the
+  // normal path — so /commands and @session work dictated, for free.
+  async function textoDoAudio(caminho) {
+    try {
+      return await transcribe({
+        path: caminho,
+        apiKey: config.openaiApiKey,
+        model: config.transcribeModel,
+        timeoutMs: config.transcribeTimeoutMs,
+      })
+    } finally {
+      rmSync(caminho, { force: true })
+    }
+  }
+
+  async function handle(entrada) {
+    const { text, media } = typeof entrada === 'string' ? { text: entrada, media: null } : (entrada ?? {})
+
+    let texto = text
+    if (media?.kind === 'audio') {
+      const r = await textoDoAudio(media.path)
+      if (!r.ok) return reply(`Não consegui transcrever o áudio: ${r.error}`)
+      texto = r.text
+    }
+
     const cmd = parse(texto)
 
     if (cmd.type === 'error') return reply(cmd.message)
@@ -139,7 +168,8 @@ export function createHandler({ sessions, run, reply, config }) {
       sessao = sessions.active() ?? sessions.create({ cwd: config.defaultCwd })
     }
 
-    return despachar(sessao, cmd.text)
+    const prompt = media?.kind === 'image' ? promptComImagem(cmd.text, media.path) : cmd.text
+    return despachar(sessao, prompt)
   }
 
   return { handle }

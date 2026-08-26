@@ -12,6 +12,9 @@ const DEFAULTS = {
   slowNoticeMs: 8000,
   timeoutMs: 900000,
   maxMessageChars: 3500,
+  openaiApiKey: null,
+  transcribeModel: 'gpt-4o-transcribe',
+  transcribeTimeoutMs: 120000,
 }
 
 const ENV_MAP = {
@@ -21,6 +24,7 @@ const ENV_MAP = {
   CLAUDE_WPP_STATE_DIR: ['stateDir', String],
   CLAUDE_WPP_CLAUDE_BIN: ['claudeBin', String],
   CLAUDE_WPP_DEFAULT_CWD: ['defaultCwd', String],
+  OPENAI_API_KEY: ['openaiApiKey', String],
 }
 
 export function loadConfig({ path = join(homedir(), 'claude-wpp', 'config.json'), env = process.env } = {}) {
@@ -40,6 +44,9 @@ export function loadConfig({ path = join(homedir(), 'claude-wpp', 'config.json')
   for (const campo of ['apiToken', 'authorizedNumber', 'botNumber']) {
     if (!cfg[campo]) throw new Error(`config inválido: ${campo} é obrigatório`)
   }
+
+  // Derived after the overrides, so it follows whoever moves the stateDir.
+  cfg.mediaDir ??= join(cfg.stateDir, 'media')
 
   return cfg
 }

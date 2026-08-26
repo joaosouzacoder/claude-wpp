@@ -2,9 +2,10 @@ import { mkdirSync } from 'node:fs'
 import qrcode from 'qrcode-terminal'
 import * as baileys from '@whiskeysockets/baileys'
 import { sameNumber, senderNumber, normalizeNumber } from './numbers.js'
+import { saveMedia } from './media.js'
 
 const makeWASocket = baileys.makeWASocket ?? baileys.default
-const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = baileys
+const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } = baileys
 
 // Baileys expects a pino-shaped logger. We avoid the dependency.
 const loggerMudo = {
@@ -13,19 +14,26 @@ const loggerMudo = {
   child() { return loggerMudo },
 }
 
-function textoDaMensagem(msg) {
-  const m = msg.message
-  if (!m) return ''
-  return (
-    m.conversation ??
-    m.extendedTextMessage?.text ??
-    m.imageMessage?.caption ??
-    m.videoMessage?.caption ??
-    ''
-  )
+// Separates what can be decided without touching the network from the download.
+export function classificar(msg) {
+  const m = msg?.message
+  if (!m) return { kind: 'text', text: '', mimetype: null }
+
+  if (m.imageMessage) {
+    return { kind: 'image', text: m.imageMessage.caption ?? '', mimetype: m.imageMessage.mimetype ?? null }
+  }
+  if (m.audioMessage) {
+    return { kind: 'audio', text: '', mimetype: m.audioMessage.mimetype ?? null }
+  }
+
+  return {
+    kind: 'text',
+    text: m.conversation ?? m.extendedTextMessage?.text ?? m.videoMessage?.caption ?? '',
+    mimetype: null,
+  }
 }
 
-export function createWhatsapp({ authDir, authorizedNumber, onMessage, log = console }) {
+export function createWhatsapp({ authDir, mediaDir, authorizedNumber, onMessage, log = console }) {
   let sock = null
   let estado = 'closed'
 
@@ -77,10 +85,22 @@ export function createWhatsapp({ authDir, authorizedNumber, onMessage, log = con
             continue
           }
 
-          const texto = textoDaMensagem(msg).trim()
-          if (!texto) continue
+          const { kind, text, mimetype } = classificar(msg)
 
-          await onMessage(texto)
+          let media = null
+          if (kind !== 'text') {
+            const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
+              logger: loggerMudo,
+              reuploadRequest: sock.updateMediaMessage,
+            })
+            media = { kind, mimetype, path: saveMedia({ dir: mediaDir, buffer, mimetype, kind }) }
+            log.debug?.(`${kind} salvo em ${media.path}`)
+          }
+
+          const texto = text.trim()
+          if (!texto && !media) continue
+
+          await onMessage({ text: texto, media })
         } catch (err) {
           log.error(`falha ao tratar mensagem: ${err.stack ?? err.message}`)
         }
