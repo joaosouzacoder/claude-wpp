@@ -20,7 +20,7 @@ jobs:
       matrix:
         node: ["24", "25"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -36,7 +36,7 @@ jobs:
     # an e-mail address. Fail the build rather than let one back in.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Scan the tree for personal data
         run: |
