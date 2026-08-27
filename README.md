@@ -116,9 +116,9 @@ It acts when you ask it to, from the bot's chat.
 ```
 /wpp look at the leaders group and answer John Doe — the migration slips a week
 
-> [wpp] John Doe asked on Tuesday whether it was still on for the 29th.
-> [wpp] draft #3 → Team Leads (replying to John Doe)
->       "Fala John Doe, a migração vai ficar pra semana que vem..."
+> [wpp] John asked on Tuesday whether it was still on for the 29th.
+> [wpp] draft #3 → Team Leads (replying to John)
+>       "Fala John, a migração vai ficar pra semana que vem..."
 >       /ok 3 approves · /no 3 discards
 
 /ok 3
@@ -134,10 +134,10 @@ long as WhatsApp still allows deleting it for everyone.
 
 ```
 /wpp remind Jane Doe tomorrow at 9 to bring the macbook,
-    but check first whether he already answered
+    but check first whether they already answered
 
-> [wpp] draft #4 → Jane Doe — sai em 28/08/2026, 09:00
->       antes de mandar, verifica: ele já confirmou que traz o macbook?
+> [wpp] draft #4 → Jane — sai em 28/08/2026, 09:00
+>       antes de mandar, verifica: já confirmou que traz o macbook?
 >       "Bom dia! Lembra de trazer o macbook hoje."
 >       /ok 4 aprova · /no 4 descarta
 ```

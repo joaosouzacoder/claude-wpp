@@ -6,7 +6,7 @@ import { normalize, createCapture } from '../src/capture.js'
 const noGrupo = (message, extra = {}) => ({
   key: { remoteJid: '1-2@g.us', fromMe: false, id: 'A1', participant: '5511911111111@s.whatsapp.net' },
   messageTimestamp: 1700000000,
-  pushName: 'John Doe',
+  pushName: 'John',
   message,
   ...extra,
 })
@@ -18,7 +18,7 @@ test('mensagem de texto em grupo vira linha completa', () => {
     chatJid: '1-2@g.us',
     chatKind: 'group',
     senderJid: '5511911111111@s.whatsapp.net',
-    senderName: 'John Doe',
+    senderName: 'John',
     fromMe: 0,
     ts: 1700000000,
     kind: 'text',
@@ -63,7 +63,7 @@ test('conversa direta é dm e o remetente é o próprio contato', () => {
   const r = normalize({
     key: { remoteJid: '5511911111111@s.whatsapp.net', fromMe: false, id: 'C1' },
     messageTimestamp: 1700000001,
-    pushName: 'Jane Doe',
+    pushName: 'Jane',
     message: { conversation: 'levo o macbook sim' },
   })
   assert.equal(r.chatKind, 'dm')

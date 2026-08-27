@@ -397,12 +397,12 @@ function montarComWpp({ run, undo } = {}) {
       outbox,
       agentCwd: dir,
       tick: async () => { passadas.push(1) },
-      undo: undo ?? (async () => ({ ok: true, job: { chat_name: 'Jane Doe', body: 'traz o macbook' } })),
+      undo: undo ?? (async () => ({ ok: true, job: { chat_name: 'Jane', body: 'traz o macbook' } })),
     },
   })
 
   const rascunho = (extra = {}) =>
-    outbox.create({ chatJid: '5@s.whatsapp.net', chatName: 'Jane Doe', body: 'traz o macbook', ...extra })
+    outbox.create({ chatJid: '5@s.whatsapp.net', chatName: 'Jane', body: 'traz o macbook', ...extra })
 
   return { handler, outbox, ditos, passadas, rascunho }
 }
@@ -462,14 +462,14 @@ test('/schedulers mostra o que espera ok e o que está agendado', async () => {
   outbox.approve(agendado.id)
 
   await handler.handle('/schedulers')
-  assert.match(ditos.at(-1), /Jane Doe/)
+  assert.match(ditos.at(-1), /Jane/)
   assert.match(ditos.at(-1), /Agendadas/)
 })
 
 test('/undo conta o que apagou', async () => {
   const { handler, ditos } = montarComWpp()
   await handler.handle('/undo')
-  assert.match(ditos.at(-1), /Jane Doe/)
+  assert.match(ditos.at(-1), /Jane/)
 })
 
 test('/undo que falha explica o motivo', async () => {

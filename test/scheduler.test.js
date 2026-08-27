@@ -27,7 +27,7 @@ function montar({ decide, send } = {}) {
   return {
     outbox, scheduler, enviadas, avisos,
     avancar: (t) => { relogio = t },
-    agendar: (extra = {}) => outbox.create({ chatJid: '5@s.whatsapp.net', chatName: 'Jane Doe', body: 'traz o macbook', ...extra }),
+    agendar: (extra = {}) => outbox.create({ chatJid: '5@s.whatsapp.net', chatName: 'Jane', body: 'traz o macbook', ...extra }),
   }
 }
 

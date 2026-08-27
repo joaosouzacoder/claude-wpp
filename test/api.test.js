@@ -113,7 +113,7 @@ test('outbox sem token é 401', async () => {
 
 test('rascunho criado nasce pendente e nunca é enviado sozinho', async () => {
   const antes = enviados.length
-  const r = await propor({ chatJid: '5@s.whatsapp.net', chatName: 'Jane Doe', body: 'traz o macbook' })
+  const r = await propor({ chatJid: '5@s.whatsapp.net', chatName: 'Jane', body: 'traz o macbook' })
   assert.equal(r.status, 200)
   const { ok, id } = await r.json()
   assert.equal(ok, true)
@@ -121,7 +121,7 @@ test('rascunho criado nasce pendente e nunca é enviado sozinho', async () => {
   assert.equal(enviados.length, antes)
 })
 
-test('criar rascunho avisa o João, senão ele nunca saberia que existe', async () => {
+test('criar rascunho avisa o dono, senão ele nunca saberia que existe', async () => {
   const antes = avisos.length
   await propor({ chatJid: '5@s.whatsapp.net', body: 'oi' })
   assert.equal(avisos.length, antes + 1)

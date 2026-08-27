@@ -6,7 +6,7 @@ import { createWpp, parseVeredito, formatDraft, formatQueue } from '../src/wpp.j
 
 // --- leitura do veredito ---
 // Fecha para o lado seguro: o que não for entendido vira erro, e o scheduler
-// devolve a decisão para o João em vez de mandar às cegas.
+// devolve a decisão para o dono em vez de mandar às cegas.
 
 test('ENVIAR é lido com o motivo', () => {
   assert.deepEqual(parseVeredito('ENVIAR: ele não respondeu nada sobre o macbook'), {
@@ -37,9 +37,9 @@ test('não inventa veredito quando as duas palavras aparecem: vale a primeira', 
 // --- textos mostrados ---
 
 test('o rascunho mostra destino e texto exato antes de você aprovar', () => {
-  const texto = formatDraft({ id: 3, kind: 'message', chat_name: 'Jane Doe', body: 'traz o macbook', scheduled_for: null })
+  const texto = formatDraft({ id: 3, kind: 'message', chat_name: 'Jane', body: 'traz o macbook', scheduled_for: null })
   assert.match(texto, /#3/)
-  assert.match(texto, /Jane Doe/)
+  assert.match(texto, /Jane/)
   assert.match(texto, /traz o macbook/)
   assert.match(texto, /\/ok 3/)
   assert.match(texto, /\/no 3/)
@@ -47,7 +47,7 @@ test('o rascunho mostra destino e texto exato antes de você aprovar', () => {
 
 test('rascunho agendado avisa a hora em que sairá', () => {
   const texto = formatDraft({
-    id: 4, kind: 'conditional', chat_name: 'Jane Doe', body: 'traz o macbook',
+    id: 4, kind: 'conditional', chat_name: 'Jane', body: 'traz o macbook',
     scheduled_for: 1756382400, check_prompt: 'ele já respondeu?',
   })
   assert.match(texto, /ele já respondeu\?/)
@@ -60,13 +60,13 @@ test('a fila vazia diz que está vazia em vez de mostrar nada', () => {
 
 test('a fila separa o que espera aprovação do que já está agendado', () => {
   const texto = formatQueue({
-    pending: [{ id: 1, chat_name: 'John Doe', body: 'ok', scheduled_for: null, kind: 'message' }],
-    scheduled: [{ id: 2, chat_name: 'Jane Doe', body: 'macbook', scheduled_for: 1756382400, kind: 'conditional' }],
+    pending: [{ id: 1, chat_name: 'John', body: 'ok', scheduled_for: null, kind: 'message' }],
+    scheduled: [{ id: 2, chat_name: 'Jane', body: 'macbook', scheduled_for: 1756382400, kind: 'conditional' }],
   })
   assert.match(texto, /#1/)
   assert.match(texto, /#2/)
-  assert.match(texto, /John Doe/)
-  assert.match(texto, /Jane Doe/)
+  assert.match(texto, /John/)
+  assert.match(texto, /Jane/)
 })
 
 // --- envio, citação e desfazer ---
@@ -97,7 +97,7 @@ function montar({ run, sendText, deleteMessage } = {}) {
 
 test('envia o corpo aprovado para o jid do destino', async () => {
   const { outbox, wpp, enviadas } = montar()
-  const d = outbox.create({ chatJid: '5@s.whatsapp.net', chatName: 'Jane Doe', body: 'traz o macbook' })
+  const d = outbox.create({ chatJid: '5@s.whatsapp.net', chatName: 'Jane', body: 'traz o macbook' })
   const r = await wpp.send(outbox.get(d.id))
 
   assert.deepEqual(r, { ok: true, waId: 'WA-NOVO' })
@@ -135,7 +135,7 @@ test('erro do whatsapp vira resultado, não exceção', async () => {
 
 test('undo apaga a última enviada e a tira da fila do undo', async () => {
   const { outbox, wpp, apagadas } = montar()
-  const d = outbox.create({ chatJid: '5@s.whatsapp.net', chatName: 'Jane Doe', body: 'traz o macbook' })
+  const d = outbox.create({ chatJid: '5@s.whatsapp.net', chatName: 'Jane', body: 'traz o macbook' })
   outbox.approve(d.id)
   outbox.markSent(d.id, 'WA-1')
 
@@ -175,12 +175,12 @@ test('a verificação recebe a conversa e devolve o veredito', async () => {
       return { ok: true, text: 'PULAR: ele confirmou que traz', sessionId: null, error: null }
     },
   })
-  db.prepare("insert into chats (jid, name, kind, updated_at) values ('5@s.whatsapp.net', 'Jane Doe', 'dm', 0)").run()
+  db.prepare("insert into chats (jid, name, kind, updated_at) values ('5@s.whatsapp.net', 'Jane', 'dm', 0)").run()
   db.prepare(`insert into messages (wa_id, chat_jid, sender_name, from_me, ts, kind, body)
-              values ('M1', '5@s.whatsapp.net', 'Jane Doe', 0, 1500, 'text', 'pode deixar, levo o macbook')`).run()
+              values ('M1', '5@s.whatsapp.net', 'Jane', 0, 1500, 'text', 'pode deixar, levo o macbook')`).run()
 
   const d = outbox.create({
-    chatJid: '5@s.whatsapp.net', chatName: 'Jane Doe', body: 'traz o macbook',
+    chatJid: '5@s.whatsapp.net', chatName: 'Jane', body: 'traz o macbook',
     kind: 'conditional', checkPrompt: 'ele já disse se traz?', scheduledFor: 2000,
   })
 
@@ -202,14 +202,14 @@ test('claude fora do ar faz a verificação estourar, e o scheduler devolve para
 })
 
 // --- fuso ---
-// A máquina roda em UTC; o João pensa em BRT. Exibir a hora da máquina faria ele
+// A máquina roda em UTC; o dono pensa em BRT. Exibir a hora da máquina faria ele
 // recusar um agendamento que estava certo.
 
 const NOVE_DA_MANHA_BRT = Math.floor(new Date('2026-08-28T09:00:00-03:00').getTime() / 1000)
 
-test('o rascunho mostra a hora no fuso do João, não no da máquina', () => {
+test('o rascunho mostra a hora no fuso do dono, não no da máquina', () => {
   const texto = formatDraft(
-    { id: 1, kind: 'message', chat_name: 'Jane Doe', body: 'macbook', scheduled_for: NOVE_DA_MANHA_BRT },
+    { id: 1, kind: 'message', chat_name: 'Jane', body: 'macbook', scheduled_for: NOVE_DA_MANHA_BRT },
     'America/Sao_Paulo',
   )
   assert.match(texto, /09:00/)
@@ -218,7 +218,7 @@ test('o rascunho mostra a hora no fuso do João, não no da máquina', () => {
 
 test('a fila também respeita o fuso', () => {
   const texto = formatQueue(
-    { pending: [], scheduled: [{ id: 1, kind: 'message', chat_name: 'Jane Doe', body: 'macbook', scheduled_for: NOVE_DA_MANHA_BRT }] },
+    { pending: [], scheduled: [{ id: 1, kind: 'message', chat_name: 'Jane', body: 'macbook', scheduled_for: NOVE_DA_MANHA_BRT }] },
     'America/Sao_Paulo',
   )
   assert.match(texto, /09:00/)
@@ -234,12 +234,12 @@ test('a conversa mostrada na verificação também vem no fuso certo', async () 
     run: async ({ prompt }) => { promptVisto = prompt; return { ok: true, text: 'ENVIAR: nada', sessionId: null, error: null } },
     config: { claudeBin: 'claude', agentCwd: '/tmp', timeoutMs: 1000, timezone: 'America/Sao_Paulo' },
   })
-  db.prepare("insert into chats (jid, name, kind, updated_at) values ('5@s.whatsapp.net','Jane Doe','dm',0)").run()
+  db.prepare("insert into chats (jid, name, kind, updated_at) values ('5@s.whatsapp.net','Jane','dm',0)").run()
   db.prepare(`insert into messages (wa_id, chat_jid, sender_name, from_me, ts, kind, body)
-              values ('M1','5@s.whatsapp.net','Jane Doe',0,${NOVE_DA_MANHA_BRT},'text','levo sim')`).run()
+              values ('M1','5@s.whatsapp.net','Jane',0,${NOVE_DA_MANHA_BRT},'text','levo sim')`).run()
 
   const d = outbox.create({
-    chatJid: '5@s.whatsapp.net', chatName: 'Jane Doe', body: 'macbook',
+    chatJid: '5@s.whatsapp.net', chatName: 'Jane', body: 'macbook',
     kind: 'conditional', checkPrompt: 'ele respondeu?',
   })
   await wpp.decide(outbox.get(d.id))

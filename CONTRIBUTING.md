@@ -63,6 +63,12 @@ an e-mail address. Do not put them back. Use the placeholders:
 | Legacy 8-digit form | `551111111111` |
 | E-mail | `fulano@example.com` |
 | Home path | `%h` in systemd units, `/home/user` in docs |
+| A person's name | `John Doe`, `Jane Doe` |
+| A group or company | `Team Leads`, `Example Corp` |
+
+Names count as personal data here, in examples and in tests as much as anywhere
+else. Never a real person, never a real employer — not even in a README sample
+of a conversation. Use the placeholders above.
 
 `config.json` is gitignored and holds the real values. It stays that way.
 

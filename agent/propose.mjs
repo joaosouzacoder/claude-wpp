@@ -55,4 +55,4 @@ if (!r.ok || !resposta.ok) {
   process.exit(1)
 }
 
-console.log(`rascunho #${resposta.id} criado e aguardando o /ok do João.`)
+console.log(`rascunho #${resposta.id} criado e aguardando o /ok do dono da conta.`)
