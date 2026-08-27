@@ -1,3 +1,4 @@
+import { renameSync, existsSync } from 'node:fs'
 import { loadConfig } from './config.js'
 import { createWhatsapp, aceitaDoBot, aceitaTudo } from './whatsapp.js'
 import { openDb } from './db.js'
@@ -35,22 +36,48 @@ const registrar = (msg) => {
   }
 }
 
-const whatsapp = createWhatsapp({
-  authDir: alvo.authDir,
-  accept: alvo.accept,
-  downloadMedia: !pessoal,
-  onMessage: async ({ raw }) => registrar(raw),
-  onHistory: pessoal ? (mensagens) => {
-    for (const m of mensagens) registrar(m)
-    console.log(`  ...${gravadas} mensagem(ns) gravada(s)`)
-  } : undefined,
-  onChats: pessoal ? (chats) => {
-    for (const c of chats) capture.rememberChat(c)
-    ultima = Date.now()
-  } : undefined,
-  label: alvo.label,
-  log: console,
-})
+function montar() {
+  return createWhatsapp({
+    authDir: alvo.authDir,
+    accept: alvo.accept,
+    downloadMedia: !pessoal,
+    onMessage: async ({ raw }) => registrar(raw),
+    onHistory: pessoal ? (mensagens) => {
+      for (const m of mensagens) registrar(m)
+      console.log(`  ...${gravadas} mensagem(ns) gravada(s)`)
+    } : undefined,
+    onChats: pessoal ? (chats) => {
+      for (const c of chats) capture.rememberChat(c)
+      ultima = Date.now()
+    } : undefined,
+    label: alvo.label,
+    log: console,
+  })
+}
+
+let whatsapp = montar()
+
+// Unlinking the device on the phone leaves credentials behind that can only
+// produce a 401. Resuming them shows no QR and looks like a freeze, so retire
+// them and start the pairing over — keeping the old folder rather than deleting
+// it, in case the wrong account was unlinked.
+async function conectarPareando() {
+  try {
+    await whatsapp.connect()
+  } catch (err) {
+    if (!err.deslogado) throw err
+
+    const aposentado = `${alvo.authDir}.morto-${Date.now()}`
+    if (existsSync(alvo.authDir)) renameSync(alvo.authDir, aposentado)
+    console.log()
+    console.log('As credenciais guardadas já não valem — o aparelho foi desconectado no celular.')
+    console.log(`Movi as antigas para ${aposentado} e vou parear do zero.`)
+    console.log()
+
+    whatsapp = montar()
+    await whatsapp.connect()
+  }
+}
 
 console.log(`Pareando a conta ${alvo.label} (${alvo.numero}).`)
 console.log('No celular: WhatsApp > Aparelhos conectados > Conectar aparelho.')
@@ -66,7 +93,7 @@ if (pessoal) {
   console.log()
 }
 
-await whatsapp.connect()
+await conectarPareando()
 
 if (pessoal) {
   console.log('Pareado. Recebendo o histórico — isso leva um minuto, não interrompa.')

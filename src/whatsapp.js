@@ -93,6 +93,8 @@ export function createWhatsapp({
 }) {
   let sock = null
   let estado = 'closed'
+  // Lets the connection handler fail whoever is awaiting connect().
+  let desistir = null
 
   async function connect() {
     mkdirSync(authDir, { recursive: true })
@@ -122,7 +124,11 @@ export function createWhatsapp({
         estado = 'closed'
         const motivo = lastDisconnect?.error?.output?.statusCode
         if (motivo === DisconnectReason.loggedOut) {
-          log.error(`[${label}] sessão encerrada. Rode o pareamento de novo.`)
+          // Credentials are dead — the device was unlinked from the phone.
+          // Reconnecting would loop on 401, and whoever awaited connect() would
+          // wait for an `open` that is never coming.
+          log.error(`[${label}] sessão encerrada no aparelho.`)
+          desistir?.(Object.assign(new Error(`sessão do ${label} foi encerrada no aparelho`), { deslogado: true }))
           return
         }
         log.warn(`[${label}] caiu (${motivo}). Reconectando em 3s...`)
@@ -194,13 +200,17 @@ export function createWhatsapp({
 
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`timeout conectando (${label})`)), 120000)
-      const ouvir = ({ connection }) => {
-        if (connection === 'open') {
-          clearTimeout(timer)
-          sock.ev.off('connection.update', ouvir)
-          resolve()
-        }
+      const encerrar = (fn) => (arg) => {
+        clearTimeout(timer)
+        sock.ev.off('connection.update', ouvir)
+        desistir = null
+        fn(arg)
       }
+      const falhar = encerrar(reject)
+      const ouvir = ({ connection }) => {
+        if (connection === 'open') encerrar(resolve)()
+      }
+      desistir = falhar
       sock.ev.on('connection.update', ouvir)
     })
   }
