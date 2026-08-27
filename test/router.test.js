@@ -11,17 +11,17 @@ test('apara espaços em volta', () => {
 })
 
 test('comando sem argumento', () => {
-  assert.deepEqual(parse('/ls'), { type: 'command', name: 'ls', args: [] })
+  assert.deepEqual(parse('/ls'), { type: 'command', name: 'ls', args: [], rest: '' })
 })
 
 test('comando com argumentos', () => {
   assert.deepEqual(parse('/new ~/work/api api'), {
-    type: 'command', name: 'new', args: ['~/work/api', 'api'],
+    type: 'command', name: 'new', args: ['~/work/api', 'api'], rest: '~/work/api api',
   })
 })
 
 test('comando é case-insensitive', () => {
-  assert.deepEqual(parse('/LS'), { type: 'command', name: 'ls', args: [] })
+  assert.deepEqual(parse('/LS'), { type: 'command', name: 'ls', args: [], rest: '' })
 })
 
 test('@nome roteia sem trocar a ativa', () => {
@@ -50,4 +50,18 @@ test('e-mail no meio do texto não vira roteamento', () => {
 
 test('barra sozinha é erro, não comando', () => {
   assert.equal(parse('/').type, 'error')
+})
+
+// O texto de uma mensagem não sobrevive a split(/\s+/): quebras de linha e
+// espaços duplos somem. Comandos que carregam texto de verdade usam `rest`.
+test('comando carrega o texto cru depois do nome', () => {
+  assert.equal(parse('/edit 4 Passando  para lembrar').rest, '4 Passando  para lembrar')
+})
+
+test('rest preserva quebra de linha', () => {
+  assert.equal(parse('/edit 4 primeira linha\nsegunda linha').rest, '4 primeira linha\nsegunda linha')
+})
+
+test('comando sem argumento tem rest vazio', () => {
+  assert.equal(parse('/ls').rest, '')
 })

@@ -2,7 +2,7 @@ import { rmSync } from 'node:fs'
 import { parse } from './router.js'
 import { chunkText } from './text.js'
 import { promptComImagem } from './media.js'
-import { formatQueue } from './wpp.js'
+import { formatDraft, formatQueue } from './wpp.js'
 
 const SESSAO_WPP = 'wpp'
 
@@ -19,6 +19,7 @@ const AJUDA = [
   'Sua conta pessoal:',
   '/wpp <pedido> — lê suas conversas e prepara uma mensagem',
   '/ok <n> — aprova o rascunho n (só assim ele sai)',
+  '/edit <n> <texto> — reescreve o rascunho n (volta a precisar de /ok)',
   '/no <n> — descarta o rascunho ou cancela o agendamento n',
   '/schedulers — o que espera seu ok e o que está agendado',
   '/undo — apaga a última mensagem que mandei por você',
@@ -142,9 +143,9 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
 
     // The personal account lives in its own session so that a request about
     // your conversations never lands in whatever project session is active.
-    async wpp(args) {
+    async wpp(args, rest) {
       if (!semConta()) return
-      const pedido = args.join(' ').trim()
+      const pedido = rest.trim()
       if (!pedido) return reply('Uso: /wpp <o que você quer que eu faça na sua conta>')
 
       const sessao = sessions.get(SESSAO_WPP)
@@ -162,6 +163,25 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
 
       await reply(job.scheduled_for ? `Aprovado. #${id} sai na hora marcada.` : `Aprovado, mandando #${id}.`)
       return wpp.tick()
+    },
+
+    // Correcting the wording used to mean discarding and asking again. The edit
+    // lands back in `pending` on purpose: what goes out is what you approved.
+    async edit(args, rest) {
+      if (!semConta()) return
+      const id = numeroDoRascunho(args[0])
+      const texto = rest.slice(String(args[0] ?? '').length).trim()
+      if (!id || !texto) return reply('Uso: /edit <número> <o texto novo>')
+
+      let job
+      try {
+        job = wpp.outbox.edit(id, texto)
+      } catch (err) {
+        return reply(`Não deu: ${err.message}`)
+      }
+      if (!job) return reply(`Não achei rascunho editável #${id}. Manda /schedulers.`)
+
+      return reply(formatDraft(job, wpp.timezone))
     },
 
     async no(args) {
@@ -225,7 +245,7 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
     if (cmd.type === 'command') {
       const executor = comandos[cmd.name]
       if (!executor) return reply(`Não conheço /${cmd.name}. Manda /help.`)
-      return executor(cmd.args)
+      return executor(cmd.args, cmd.rest ?? '')
     }
 
     let sessao

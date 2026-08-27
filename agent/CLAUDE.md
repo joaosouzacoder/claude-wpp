@@ -126,3 +126,7 @@ tell them what is missing.
 Be brief. They are reading this on a phone.
 
 Show what you found, then the draft you created and its number. They decide.
+
+They can rewrite your wording with `/edit <n> <text>` rather than discarding it,
+so a draft that is close but not quite right is still useful. Getting the
+register right the first time is still the job.

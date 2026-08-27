@@ -178,3 +178,65 @@ test('sobrevive ao restart: o que estava aprovado continua vencendo', () => {
   assert.deepEqual(segundo.due(6000).map((r) => r.id), [d.id])
   db.close()
 })
+
+// --- edição ---
+// Editar não pode virar um jeito de fazer sair um texto que ninguém aprovou:
+// mexer no corpo de algo já aprovado tem que devolver a decisão para o dono.
+
+test('editar troca o corpo de um rascunho pendente', () => {
+  const { outbox } = novo()
+  const d = outbox.create(rascunho())
+  const r = outbox.edit(d.id, 'passando pra lembrar de novo')
+  assert.equal(r.body, 'passando pra lembrar de novo')
+  assert.equal(r.status, 'pending')
+})
+
+test('editar preserva horário, verificação e citação', () => {
+  const { outbox } = novo()
+  const d = outbox.create(rascunho({
+    kind: 'conditional', checkPrompt: 'já respondeu?', scheduledFor: 5000, quotedWaId: 'ORIG',
+  }))
+  const r = outbox.edit(d.id, 'outro texto')
+  assert.equal(r.scheduled_for, 5000)
+  assert.equal(r.check_prompt, 'já respondeu?')
+  assert.equal(r.quoted_wa_id, 'ORIG')
+  assert.equal(r.kind, 'conditional')
+})
+
+test('editar o que já foi aprovado devolve para pendente, exigindo novo ok', () => {
+  const { outbox } = novo()
+  const d = outbox.create(rascunho({ scheduledFor: 5000 }))
+  outbox.approve(d.id)
+  const r = outbox.edit(d.id, 'texto novo')
+  assert.equal(r.status, 'pending')
+  assert.equal(r.body, 'texto novo')
+  assert.deepEqual(outbox.due(9999), [])
+})
+
+test('não dá para editar o que já saiu', () => {
+  const { outbox } = novo()
+  const d = outbox.create(rascunho())
+  outbox.approve(d.id)
+  outbox.markSent(d.id, 'WA-1')
+  assert.equal(outbox.edit(d.id, 'tarde demais'), null)
+  assert.equal(outbox.get(d.id).body, rascunho().body)
+})
+
+test('não dá para editar o que foi descartado', () => {
+  const { outbox } = novo()
+  const d = outbox.create(rascunho())
+  outbox.reject(d.id)
+  assert.equal(outbox.edit(d.id, 'nao'), null)
+})
+
+test('editar com texto vazio não apaga o rascunho', () => {
+  const { outbox } = novo()
+  const d = outbox.create(rascunho())
+  assert.throws(() => outbox.edit(d.id, '   '), /texto/)
+  assert.equal(outbox.get(d.id).body, rascunho().body)
+})
+
+test('editar rascunho inexistente devolve nulo', () => {
+  const { outbox } = novo()
+  assert.equal(outbox.edit(999, 'oi'), null)
+})

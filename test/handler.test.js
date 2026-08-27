@@ -492,3 +492,53 @@ test('/help cita os comandos da conta pessoal', async () => {
   assert.match(ditos.at(-1), /\/wpp/)
   assert.match(ditos.at(-1), /\/schedulers/)
 })
+
+test('/edit troca o texto e devolve o card para aprovar', async () => {
+  const { handler, outbox, ditos, rascunho } = montarComWpp()
+  const d = rascunho()
+  await handler.handle(`/edit ${d.id} Passando para lembrar de novo, não esquece do mac.`)
+  assert.equal(outbox.get(d.id).body, 'Passando para lembrar de novo, não esquece do mac.')
+  assert.match(ditos.at(-1), /não esquece do mac/)
+  assert.match(ditos.at(-1), new RegExp(`/ok ${d.id}`))
+})
+
+test('/edit em algo já aprovado desarma o agendamento até você aprovar de novo', async () => {
+  const { handler, outbox, ditos, rascunho } = montarComWpp()
+  const d = rascunho({ scheduledFor: 9999 })
+  outbox.approve(d.id)
+  await handler.handle(`/edit ${d.id} texto novo`)
+  assert.equal(outbox.get(d.id).status, 'pending')
+  assert.deepEqual(outbox.due(99999), [])
+  assert.match(ditos.at(-1), /ok/i)
+})
+
+test('/edit sem texto explica o uso em vez de apagar o rascunho', async () => {
+  const { handler, outbox, ditos, rascunho } = montarComWpp()
+  const d = rascunho()
+  await handler.handle(`/edit ${d.id}`)
+  assert.equal(outbox.get(d.id).body, 'traz o macbook')
+  assert.match(ditos.at(-1), /uso:/i)
+})
+
+test('/edit no que já saiu avisa que é tarde', async () => {
+  const { handler, outbox, ditos, rascunho } = montarComWpp()
+  const d = rascunho()
+  outbox.approve(d.id)
+  outbox.markSent(d.id, 'WA-1')
+  await handler.handle(`/edit ${d.id} tarde demais`)
+  assert.equal(outbox.get(d.id).body, 'traz o macbook')
+  assert.match(ditos.at(-1), /não achei/i)
+})
+
+test('/edit preserva o texto com acentos e pontuação', async () => {
+  const { handler, outbox, rascunho } = montarComWpp()
+  const d = rascunho()
+  await handler.handle(`/edit ${d.id} Opa! Já conseguiu? Não esquece — é hoje.`)
+  assert.equal(outbox.get(d.id).body, 'Opa! Já conseguiu? Não esquece — é hoje.')
+})
+
+test('/help cita o /edit', async () => {
+  const { handler, ditos } = montarComWpp()
+  await handler.handle('/help')
+  assert.match(ditos.at(-1), /\/edit/)
+})

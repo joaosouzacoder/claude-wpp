@@ -33,6 +33,10 @@ export function createOutbox({ db, now = () => Math.floor(Date.now() / 1000) }) 
     reopen: db.prepare("UPDATE outbox SET status = 'pending', decided_at = NULL, reason = ? WHERE id = ?"),
     sent: db.prepare("UPDATE outbox SET status = 'sent', sent_at = ?, sent_wa_id = ? WHERE id = ?"),
     encerrar: db.prepare('UPDATE outbox SET status = ?, reason = ? WHERE id = ?'),
+    editar: db.prepare(`
+      UPDATE outbox SET body = ?, status = 'pending', decided_at = NULL
+      WHERE id = ? AND status IN ('pending', 'approved')
+    `),
   }
 
   // A transition only fires from the state it is allowed to leave, so a repeated
@@ -66,6 +70,15 @@ export function createOutbox({ db, now = () => Math.floor(Date.now() / 1000) }) 
     approve: (id) => transicionar(id, 'pending', 'approved'),
     reject: (id) => transicionar(id, 'pending', 'rejected'),
     cancel: (id) => transicionar(id, 'approved', 'canceled'),
+
+    // Changing the words of something already approved would let a text nobody
+    // agreed to go out under an old approval. So an edit always lands back in
+    // `pending`, and the owner approves the new wording or does not.
+    edit(id, body) {
+      if (!String(body ?? '').trim()) throw new Error('edição sem texto')
+      const { changes } = stmt.editar.run(String(body).trim(), id)
+      return changes > 0 ? stmt.get.get(id) : null
+    },
 
     reopen(id, motivo) {
       stmt.reopen.run(motivo ?? null, id)

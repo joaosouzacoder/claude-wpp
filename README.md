@@ -36,6 +36,7 @@ systemctl --user start claude-wpp
 | `/help` | lists the commands |
 | `/wpp <request>` | reads your own WhatsApp and prepares a message (see below) |
 | `/ok <n>` | approves draft `n` — the only way anything gets sent |
+| `/edit <n> <text>` | rewrites draft `n`; it needs `/ok` again |
 | `/no <n>` | discards a draft or cancels a schedule |
 | `/schedulers` | what is waiting for your approval and what is scheduled |
 | `/undo` | deletes the last message sent on your behalf |
@@ -129,6 +130,10 @@ It acts when you ask it to, from the bot's chat.
 Claude reads the log with SQL and proposes. **It cannot send.** A draft sits as
 `pending` until you reply `/ok`, and `/undo` deletes the last message sent as
 long as WhatsApp still allows deleting it for everyone.
+
+If the wording is not yours, `/edit 3 the text you actually want` replaces it.
+An edit always returns the draft to `pending`, including one you had already
+approved — otherwise words nobody agreed to could go out under an old approval.
 
 ### Scheduling
 

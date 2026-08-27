@@ -6,7 +6,10 @@ export function parse(entrada) {
   if (texto.startsWith('/')) {
     const [cru, ...args] = texto.slice(1).split(/\s+/).filter(Boolean)
     if (!cru) return { type: 'error', message: 'Comando vazio. Manda /help.' }
-    return { type: 'command', name: cru.toLowerCase(), args }
+    // `args` is enough for names and numbers. Anything carrying a real message
+    // needs `rest`: splitting on whitespace eats line breaks and double spaces.
+    const rest = texto.slice(1 + cru.length).trim()
+    return { type: 'command', name: cru.toLowerCase(), args, rest }
   }
 
   if (texto.startsWith('@')) {
