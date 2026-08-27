@@ -1,10 +1,9 @@
-import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { loadConfig } from './config.js'
 import { createStore } from './store.js'
 import { createSessions } from './sessions.js'
 import { createHandler } from './handler.js'
-import { createWhatsapp, aceitaDoBot, aceitaTudo } from './whatsapp.js'
+import { createWhatsapp, aceitaDoBot, aceitaTudo, credenciaisValidas } from './whatsapp.js'
 import { createApi } from './api.js'
 import { runClaude } from './claude.js'
 import { transcribe } from './transcribe.js'
@@ -21,10 +20,61 @@ const log = {
   debug: (m) => { if (process.env.CLAUDE_WPP_DEBUG) console.log(`[debug] ${m}`) },
 }
 
-// The personal account only exists once it has been paired by hand. Without
-// credentials the daemon must not block on a QR code it has nobody to show to.
+// The personal account only exists once it has been paired by hand. A QR printed
+// into the journal is a QR nobody can scan, so the daemon has to be sure before
+// it dials — see credenciaisValidas.
 function contaPessoalPareada(config) {
-  return Boolean(config.personalNumber) && existsSync(join(config.personalAuthDir, 'creds.json'))
+  return Boolean(config.personalNumber) && credenciaisValidas(config.personalAuthDir)
+}
+
+function montarContaPessoal(config, avisar) {
+  const db = openDb(config.dbPath)
+  const capture = createCapture({ db })
+  const outbox = createOutbox({ db })
+
+  // Records and stays silent. There is no path from "a message arrived on my
+  // personal WhatsApp" to "Claude does something" — that is the whole point of
+  // "only when I ask".
+  const me = createWhatsapp({
+    authDir: config.personalAuthDir,
+    accept: aceitaTudo,
+    downloadMedia: false,
+    onMessage: ({ raw }) => { capture.record(raw) },
+    onHistory: (mensagens) => {
+      let n = 0
+      for (const m of mensagens) if (capture.record(m)) n += 1
+      if (n) log.info(`[pessoal] ${n} mensagem(ns) de histórico gravada(s).`)
+    },
+    onChats: (chats) => { for (const c of chats) capture.rememberChat(c) },
+    label: 'pessoal',
+    log,
+  })
+
+  const wpp = createWpp({
+    db,
+    outbox,
+    wa: me,
+    run: runClaude,
+    config: {
+      claudeBin: config.claudeBin,
+      agentCwd: config.agentCwd,
+      timeoutMs: config.timeoutMs,
+      timezone: config.timezone,
+    },
+  })
+
+  const scheduler = createScheduler({
+    outbox,
+    send: wpp.send,
+    decide: wpp.decide,
+    notify: avisar,
+    toleranceSec: config.scheduleToleranceSec,
+    timezone: config.timezone,
+    intervalMs: config.schedulerIntervalMs,
+    log,
+  })
+
+  return { db, me, outbox, wpp, scheduler }
 }
 
 async function main() {
@@ -32,74 +82,51 @@ async function main() {
   const store = createStore(join(config.stateDir, 'state.json'))
   const sessions = createSessions({ store, defaultCwd: config.defaultCwd })
 
-  // whatsapp and handler reference each other: the adapter delivers the message
-  // to the handler, the handler replies through the adapter. The arrow below is
-  // lazy, so `handler` already exists when the first message arrives.
+  // The adapter delivers to the handler and the handler replies through the
+  // adapter, so one of them has to exist first. The bot now connects before the
+  // handler is built — a message arriving in that window is dropped with a log
+  // line instead of crashing on a binding that is not initialised yet.
+  let handler = null
+
   const whatsapp = createWhatsapp({
     authDir: config.botAuthDir,
     mediaDir: config.mediaDir,
     accept: (key) => aceitaDoBot(key, config.authorizedNumber),
-    onMessage: (msg) => handler.handle(msg).catch((e) => log.error(e.stack ?? e.message)),
+    onMessage: (msg) => {
+      if (!handler) return log.warn('mensagem chegou antes do handler subir; ignorada.')
+      return handler.handle(msg).catch((e) => log.error(e.stack ?? e.message))
+    },
     label: 'bot',
     log,
   })
 
   const avisar = (texto) => whatsapp.sendText(config.authorizedNumber, texto)
 
-  let pessoal = null
-  if (contaPessoalPareada(config)) {
-    const db = openDb(config.dbPath)
-    const capture = createCapture({ db })
-    const outbox = createOutbox({ db })
+  log.info(`${sessions.list().length} sessão(ões) recuperada(s) do estado.`)
+  await whatsapp.connect()
 
-    // Records and stays silent. There is no path from "a message arrived on my
-    // personal WhatsApp" to "Claude does something" — that is the whole point
-    // of "only when I ask".
-    const me = createWhatsapp({
-      authDir: config.personalAuthDir,
-      accept: aceitaTudo,
-      downloadMedia: false,
-      onMessage: ({ raw }) => { capture.record(raw) },
-      onHistory: (mensagens) => {
-        let n = 0
-        for (const m of mensagens) if (capture.record(m)) n += 1
-        if (n) log.info(`[pessoal] ${n} mensagem(ns) de histórico gravada(s).`)
-      },
-      onChats: (chats) => { for (const c of chats) capture.rememberChat(c) },
-      label: 'pessoal',
-      log,
-    })
-
-    const wpp = createWpp({
-      db,
-      outbox,
-      wa: me,
-      run: runClaude,
-      config: {
-        claudeBin: config.claudeBin,
-        agentCwd: config.agentCwd,
-        timeoutMs: config.timeoutMs,
-        timezone: config.timezone,
-      },
-    })
-
-    const scheduler = createScheduler({
-      outbox,
-      send: wpp.send,
-      decide: wpp.decide,
-      notify: avisar,
-      toleranceSec: config.scheduleToleranceSec,
-      timezone: config.timezone,
-      intervalMs: config.schedulerIntervalMs,
-      log,
-    })
-
-    pessoal = { db, me, outbox, wpp, scheduler }
-  } else if (config.personalNumber) {
+  let pessoal = contaPessoalPareada(config) ? montarContaPessoal(config, avisar) : null
+  if (!pessoal && config.personalNumber) {
     log.warn('conta pessoal configurada mas não pareada — rode `npm run pair:me`.')
   }
 
-  const handler = createHandler({
+  // The bot is the half that must never go down. If the personal account fails
+  // to come up, its commands say so and everything else keeps working: losing
+  // the whole daemon over the optional half is far worse than losing the half.
+  if (pessoal) {
+    try {
+      await pessoal.me.connect()
+      pessoal.scheduler.start()
+      log.info(`conta pessoal ligada; ${pessoal.outbox.pending().length} rascunho(s) esperando aprovação.`)
+    } catch (err) {
+      log.error(`conta pessoal não subiu: ${err.message}. Sigo sem ela — rode \`npm run pair:me\`.`)
+      pessoal.scheduler.stop()
+      pessoal.db.close()
+      pessoal = null
+    }
+  }
+
+  handler = createHandler({
     sessions,
     run: runClaude,
     transcribe,
@@ -133,15 +160,6 @@ async function main() {
       await api.close().catch(() => {})
       process.exit(0)
     })
-  }
-
-  log.info(`${sessions.list().length} sessão(ões) recuperada(s) do estado.`)
-  await whatsapp.connect()
-
-  if (pessoal) {
-    await pessoal.me.connect()
-    pessoal.scheduler.start()
-    log.info(`conta pessoal ligada; ${pessoal.outbox.pending().length} rascunho(s) esperando aprovação.`)
   }
 
   const porta = await api.listen()

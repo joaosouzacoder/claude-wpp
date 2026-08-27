@@ -1,4 +1,5 @@
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import qrcode from 'qrcode-terminal'
 import * as baileys from '@whiskeysockets/baileys'
 import { sameNumber, senderNumber, normalizeNumber } from './numbers.js'
@@ -44,6 +45,17 @@ export function aceitaDoBot(key, authorizedNumber) {
 }
 
 export const aceitaTudo = () => true
+
+// Baileys writes creds.json the moment the auth folder is opened, long before
+// anyone scans the QR. Only `registered` says the pairing actually completed —
+// trusting the file's existence makes the daemon dial an account nobody linked.
+export function credenciaisValidas(authDir) {
+  try {
+    return JSON.parse(readFileSync(join(authDir, 'creds.json'), 'utf8')).registered === true
+  } catch {
+    return false
+  }
+}
 
 export function jidDe(destino) {
   const texto = String(destino ?? '')

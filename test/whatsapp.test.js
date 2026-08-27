@@ -1,6 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { classificar, aceitaDoBot } from '../src/whatsapp.js'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { classificar, aceitaDoBot, credenciaisValidas } from '../src/whatsapp.js'
 
 test('mensagem de texto simples continua sendo texto', () => {
   assert.deepEqual(classificar({ message: { conversation: 'oi claude' } }), {
@@ -77,4 +80,43 @@ test('o bot tolera o nono dígito do celular brasileiro', () => {
 
 test('o bot recusa quando só existe @lid, sem número real junto', () => {
   assert.equal(aceitaDoBot({ remoteJid: '99999@lid' }, '5511911111111'), false)
+})
+
+// --- credenciais realmente pareadas ---
+// Baileys escreve creds.json assim que abre o diretório, ANTES do QR ser lido.
+// Confiar na existência do arquivo faz o daemon tentar conectar uma conta que
+// ninguém pareou, cuspir QR no journal e morrer no timeout.
+
+const dirTemp = () => mkdtempSync(join(tmpdir(), 'auth-'))
+
+test('diretório que não existe não está pareado', () => {
+  assert.equal(credenciaisValidas(join(tmpdir(), 'nao-existe-mesmo-123')), false)
+})
+
+test('diretório sem creds.json não está pareado', () => {
+  assert.equal(credenciaisValidas(dirTemp()), false)
+})
+
+test('creds.json vazio não está pareado', () => {
+  const dir = dirTemp()
+  writeFileSync(join(dir, 'creds.json'), '')
+  assert.equal(credenciaisValidas(dir), false)
+})
+
+test('creds.json corrompido não está pareado', () => {
+  const dir = dirTemp()
+  writeFileSync(join(dir, 'creds.json'), '{ isso não é json')
+  assert.equal(credenciaisValidas(dir), false)
+})
+
+test('creds.json criado mas ainda não registrado não está pareado', () => {
+  const dir = dirTemp()
+  writeFileSync(join(dir, 'creds.json'), JSON.stringify({ registered: false, noiseKey: {} }))
+  assert.equal(credenciaisValidas(dir), false)
+})
+
+test('só registered true conta como pareado', () => {
+  const dir = dirTemp()
+  writeFileSync(join(dir, 'creds.json'), JSON.stringify({ registered: true, me: { id: '1@s.whatsapp.net' } }))
+  assert.equal(credenciaisValidas(dir), true)
 })
