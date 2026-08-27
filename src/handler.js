@@ -148,8 +148,15 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
       const pedido = rest.trim()
       if (!pedido) return reply('Uso: /wpp <o que você quer que eu faça na sua conta>')
 
-      const sessao = sessions.get(SESSAO_WPP)
-        ?? sessions.create({ cwd: wpp.agentCwd, name: SESSAO_WPP, activate: false })
+      // A session with this name may predate the command, or point somewhere
+      // else entirely. Pointing anywhere but agentCwd means Claude never reads
+      // the instructions that give it its tools and its one rule.
+      let sessao = sessions.get(SESSAO_WPP)
+      if (sessao && sessao.cwd !== wpp.agentCwd) {
+        sessions.end(SESSAO_WPP)
+        sessao = null
+      }
+      sessao ??= sessions.create({ cwd: wpp.agentCwd, name: SESSAO_WPP, activate: false })
       return despachar(sessao, pedido)
     },
 

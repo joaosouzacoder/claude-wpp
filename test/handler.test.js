@@ -542,3 +542,26 @@ test('/help cita o /edit', async () => {
   await handler.handle('/help')
   assert.match(ditos.at(-1), /\/edit/)
 })
+
+test('/wpp corrige uma sessão pré-existente que aponta para o diretório errado', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'handler-wpp2-'))
+  const outro = mkdtempSync(join(tmpdir(), 'errado-'))
+  const sessions = createSessions({ store: createStore(join(dir, 'state.json')), defaultCwd: dir })
+
+  // Uma sessão chamada wpp criada à mão antes do comando existir.
+  sessions.create({ cwd: outro, name: 'wpp' })
+
+  const ditos = []
+  const handler = createHandler({
+    sessions,
+    run: async ({ cwd }) => ({ ok: true, text: `rodei em ${cwd}`, sessionId: 'sid', error: null }),
+    transcribe: async () => ({ ok: true, text: '', error: null }),
+    reply: async (t) => { ditos.push(t) },
+    config: { slowNoticeMs: 10, timeoutMs: 1000, maxMessageChars: 500, claudeBin: 'claude', defaultCwd: dir },
+    wpp: { outbox: createOutbox({ db: openDb(':memory:') }), agentCwd: dir, tick: async () => {}, undo: async () => ({ ok: false }) },
+  })
+
+  await handler.handle('/wpp olha o grupo')
+  assert.equal(sessions.get('wpp').cwd, dir, 'a sessão devia ter sido reapontada para o agentCwd')
+  assert.match(ditos.at(-1), new RegExp(dir))
+})
