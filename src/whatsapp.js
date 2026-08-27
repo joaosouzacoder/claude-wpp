@@ -47,11 +47,14 @@ export function aceitaDoBot(key, authorizedNumber) {
 export const aceitaTudo = () => true
 
 // Baileys writes creds.json the moment the auth folder is opened, long before
-// anyone scans the QR. Only `registered` says the pairing actually completed —
-// trusting the file's existence makes the daemon dial an account nobody linked.
+// anyone scans the QR, so the file's existence proves nothing. `registered` is
+// no better: it is only ever initialised to false and belongs to the pairing-code
+// flow, never set by a QR login. What a completed login does leave behind is the
+// pair me.id + account — the identity and the signature of the linked device.
 export function credenciaisValidas(authDir) {
   try {
-    return JSON.parse(readFileSync(join(authDir, 'creds.json'), 'utf8')).registered === true
+    const creds = JSON.parse(readFileSync(join(authDir, 'creds.json'), 'utf8'))
+    return Boolean(creds?.me?.id) && Boolean(creds?.account)
   } catch {
     return false
   }

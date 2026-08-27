@@ -109,14 +109,27 @@ test('creds.json corrompido não está pareado', () => {
   assert.equal(credenciaisValidas(dir), false)
 })
 
-test('creds.json criado mas ainda não registrado não está pareado', () => {
+test('creds recém-criado, antes de qualquer QR, não está pareado', () => {
   const dir = dirTemp()
-  writeFileSync(join(dir, 'creds.json'), JSON.stringify({ registered: false, noiseKey: {} }))
+  writeFileSync(join(dir, 'creds.json'), JSON.stringify({ registered: false, noiseKey: {}, registrationId: 255 }))
   assert.equal(credenciaisValidas(dir), false)
 })
 
-test('só registered true conta como pareado', () => {
+// O Baileys só inicializa `registered: false` e nunca o marca true no fluxo de
+// QR — é campo do fluxo de pairing code. Quem diz que o login completou é o par
+// me.id + account, escrito quando o aparelho é aceito do outro lado.
+test('login por QR conta como pareado mesmo com registered false', () => {
   const dir = dirTemp()
-  writeFileSync(join(dir, 'creds.json'), JSON.stringify({ registered: true, me: { id: '1@s.whatsapp.net' } }))
+  writeFileSync(join(dir, 'creds.json'), JSON.stringify({
+    registered: false,
+    me: { id: '5511911111111:3@s.whatsapp.net', name: 'Fulano' },
+    account: { details: 'x', accountSignature: 'y', deviceSignature: 'z' },
+  }))
   assert.equal(credenciaisValidas(dir), true)
+})
+
+test('me sem account não conta: o aparelho não foi assinado', () => {
+  const dir = dirTemp()
+  writeFileSync(join(dir, 'creds.json'), JSON.stringify({ me: { id: '5511911111111@s.whatsapp.net' } }))
+  assert.equal(credenciaisValidas(dir), false)
 })
