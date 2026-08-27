@@ -93,10 +93,23 @@ export function createWhatsapp({
 }) {
   let sock = null
   let estado = 'closed'
-  // Lets the connection handler fail whoever is awaiting connect().
-  let desistir = null
 
-  async function connect() {
+  // Reconnecting replaces the socket, and with it the event emitter. Anything
+  // waiting on connect() therefore cannot listen on a particular socket — it
+  // would go deaf the moment the first one is dropped. The waiter lives here
+  // instead, and every socket's handler settles it.
+  let esperando = null
+
+  function assentar(qual, arg) {
+    if (!esperando) return
+    clearTimeout(esperando.timer)
+    const { resolve, reject } = esperando
+    esperando = null
+    if (qual === 'resolve') resolve(arg)
+    else reject(arg)
+  }
+
+  async function abrir() {
     mkdirSync(authDir, { recursive: true })
     const { state, saveCreds } = await useMultiFileAuthState(authDir)
     const { version } = await fetchLatestBaileysVersion()
@@ -117,6 +130,7 @@ export function createWhatsapp({
       if (connection === 'open') {
         estado = 'open'
         log.info(`[${label}] conectado.`)
+        assentar('resolve')
         if (onChats) sincronizarGrupos().catch((e) => log.warn?.(`[${label}] grupos: ${e.message}`))
       }
 
@@ -128,11 +142,14 @@ export function createWhatsapp({
           // Reconnecting would loop on 401, and whoever awaited connect() would
           // wait for an `open` that is never coming.
           log.error(`[${label}] sessão encerrada no aparelho.`)
-          desistir?.(Object.assign(new Error(`sessão do ${label} foi encerrada no aparelho`), { deslogado: true }))
+          assentar('reject', Object.assign(
+            new Error(`sessão do ${label} foi encerrada no aparelho`), { deslogado: true },
+          ))
           return
         }
+        // 515 right after pairing is WhatsApp asking for a restart, not a fault.
         log.warn(`[${label}] caiu (${motivo}). Reconectando em 3s...`)
-        setTimeout(() => { connect().catch((e) => log.error(e.message ?? e)) }, 3000)
+        setTimeout(() => { abrir().catch((e) => log.error(e.message ?? e)) }, 3000)
       }
     })
 
@@ -198,20 +215,18 @@ export function createWhatsapp({
       }
     })
 
+  }
+
+  // Arms the waiter before opening, so a connection that comes up immediately
+  // cannot settle into the void.
+  function connect() {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`timeout conectando (${label})`)), 120000)
-      const encerrar = (fn) => (arg) => {
-        clearTimeout(timer)
-        sock.ev.off('connection.update', ouvir)
-        desistir = null
-        fn(arg)
+      esperando = {
+        resolve,
+        reject,
+        timer: setTimeout(() => assentar('reject', new Error(`timeout conectando (${label})`)), 120000),
       }
-      const falhar = encerrar(reject)
-      const ouvir = ({ connection }) => {
-        if (connection === 'open') encerrar(resolve)()
-      }
-      desistir = falhar
-      sock.ev.on('connection.update', ouvir)
+      abrir().catch((err) => assentar('reject', err))
     })
   }
 
