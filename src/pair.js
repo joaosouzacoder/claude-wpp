@@ -1,5 +1,7 @@
 import { loadConfig } from './config.js'
 import { createWhatsapp, aceitaDoBot, aceitaTudo } from './whatsapp.js'
+import { openDb } from './db.js'
+import { createCapture } from './capture.js'
 
 const config = loadConfig()
 const pessoal = process.argv[2] === 'me'
@@ -13,10 +15,39 @@ const alvo = pessoal
   ? { authDir: config.personalAuthDir, numero: config.personalNumber, label: 'pessoal', accept: aceitaTudo }
   : { authDir: config.botAuthDir, numero: config.botNumber, label: 'bot', accept: (k) => aceitaDoBot(k, config.authorizedNumber) }
 
+// WhatsApp replays recent history exactly once, into whichever process links the
+// device. That process is this one — the daemon reconnecting later is handed
+// nothing. So pairing the personal account has to record, or the log starts
+// empty and the first weeks of context are gone for good.
+let capture = null
+let gravadas = 0
+let ultima = Date.now()
+
+if (pessoal) {
+  capture = createCapture({ db: openDb(config.dbPath) })
+}
+
+const registrar = (msg) => {
+  if (!capture) return
+  if (capture.record(msg)) {
+    gravadas += 1
+    ultima = Date.now()
+  }
+}
+
 const whatsapp = createWhatsapp({
   authDir: alvo.authDir,
   accept: alvo.accept,
-  onMessage: async () => {},
+  downloadMedia: !pessoal,
+  onMessage: async ({ raw }) => registrar(raw),
+  onHistory: pessoal ? (mensagens) => {
+    for (const m of mensagens) registrar(m)
+    console.log(`  ...${gravadas} mensagem(ns) gravada(s)`)
+  } : undefined,
+  onChats: pessoal ? (chats) => {
+    for (const c of chats) capture.rememberChat(c)
+    ultima = Date.now()
+  } : undefined,
   label: alvo.label,
   log: console,
 })
@@ -36,6 +67,29 @@ if (pessoal) {
 }
 
 await whatsapp.connect()
+
+if (pessoal) {
+  console.log('Pareado. Recebendo o histórico — isso leva um minuto, não interrompa.')
+
+  // The dump arrives in bursts with no reliable "that was the last one", so wait
+  // for it to go quiet rather than for a signal that may never come.
+  const QUIETO_MS = 20000
+  const TETO_MS = 300000
+  const comecou = Date.now()
+
+  await new Promise((resolve) => {
+    const timer = setInterval(() => {
+      const parado = Date.now() - ultima > QUIETO_MS
+      const estourou = Date.now() - comecou > TETO_MS
+      if (parado || estourou) {
+        clearInterval(timer)
+        resolve()
+      }
+    }, 1000)
+  })
+
+  console.log(`Histórico gravado: ${gravadas} mensagem(ns).`)
+}
 
 console.log(`Pareado. As credenciais ficaram em ${alvo.authDir}`)
 console.log('Agora reinicie o serviço: systemctl --user restart claude-wpp')

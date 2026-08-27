@@ -167,8 +167,13 @@ messages(id, wa_id, chat_jid, sender_jid, sender_name,
 ```
 
 Media is never downloaded — an audio message is stored as `[áudio 0:14]`. Text
-search runs through an FTS5 index. Pairing replays a slice of recent history, so
-the database is not empty on day one.
+search runs through an FTS5 index.
+
+WhatsApp replays a slice of recent history exactly once, to whichever process
+links the device — so `npm run pair:me` is what records it, and it waits for the
+dump to go quiet before exiting. Do not interrupt it. A daemon reconnecting
+later is handed nothing, and the only way to get that history back is to unlink
+the device on your phone and pair again.
 
 `agent/CLAUDE.md` is what teaches the `/wpp` session how to use all this; edit it
 to change how Claude writes as you.
