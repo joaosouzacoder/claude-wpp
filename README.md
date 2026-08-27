@@ -151,6 +151,11 @@ If the machine was down past the deadline, the job goes back to pending and asks
 instead of sending a "good morning" in the afternoon (`scheduleToleranceSec`,
 one hour by default).
 
+Firing time is stored as an absolute instant, so it is right whatever the host's
+clock is set to. What `timezone` controls is the hour you are *shown* when
+approving — on a UTC host, without it, a 09:00 reminder is confirmed back to you
+as "12:00" and you would reject a draft that was correct.
+
 ### The log
 
 `~/.local/state/claude-wpp/wpp.db`, two tables, queryable with plain SQL:
@@ -171,6 +176,7 @@ to change how Claude writes as you.
 | Key | Default | What it does |
 |---|---|---|
 | `personalNumber` | `null` | your number; the whole feature is off while this is unset |
+| `timezone` | `America/Sao_Paulo` | the zone every time is *shown* in — set it, the host is often UTC |
 | `schedulerIntervalMs` | `30000` | how often the queue is checked |
 | `scheduleToleranceSec` | `3600` | past this delay, a late job asks instead of firing |
 

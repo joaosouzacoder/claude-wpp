@@ -200,3 +200,48 @@ test('claude fora do ar faz a verificação estourar, e o scheduler devolve para
   })
   await assert.rejects(() => wpp.decide(outbox.get(d.id)), /claude morreu/)
 })
+
+// --- fuso ---
+// A máquina roda em UTC; o João pensa em BRT. Exibir a hora da máquina faria ele
+// recusar um agendamento que estava certo.
+
+const NOVE_DA_MANHA_BRT = Math.floor(new Date('2026-08-28T09:00:00-03:00').getTime() / 1000)
+
+test('o rascunho mostra a hora no fuso do João, não no da máquina', () => {
+  const texto = formatDraft(
+    { id: 1, kind: 'message', chat_name: 'Jane Doe', body: 'macbook', scheduled_for: NOVE_DA_MANHA_BRT },
+    'America/Sao_Paulo',
+  )
+  assert.match(texto, /09:00/)
+  assert.doesNotMatch(texto, /12:00/)
+})
+
+test('a fila também respeita o fuso', () => {
+  const texto = formatQueue(
+    { pending: [], scheduled: [{ id: 1, kind: 'message', chat_name: 'Jane Doe', body: 'macbook', scheduled_for: NOVE_DA_MANHA_BRT }] },
+    'America/Sao_Paulo',
+  )
+  assert.match(texto, /09:00/)
+})
+
+test('a conversa mostrada na verificação também vem no fuso certo', async () => {
+  let promptVisto = ''
+  const db = openDb(':memory:')
+  const outbox = createOutbox({ db, now: () => 1000 })
+  const wpp = createWpp({
+    db, outbox,
+    wa: { sendText: async () => 'WA', deleteMessage: async () => {}, state: () => 'open' },
+    run: async ({ prompt }) => { promptVisto = prompt; return { ok: true, text: 'ENVIAR: nada', sessionId: null, error: null } },
+    config: { claudeBin: 'claude', agentCwd: '/tmp', timeoutMs: 1000, timezone: 'America/Sao_Paulo' },
+  })
+  db.prepare("insert into chats (jid, name, kind, updated_at) values ('5@s.whatsapp.net','Jane Doe','dm',0)").run()
+  db.prepare(`insert into messages (wa_id, chat_jid, sender_name, from_me, ts, kind, body)
+              values ('M1','5@s.whatsapp.net','Jane Doe',0,${NOVE_DA_MANHA_BRT},'text','levo sim')`).run()
+
+  const d = outbox.create({
+    chatJid: '5@s.whatsapp.net', chatName: 'Jane Doe', body: 'macbook',
+    kind: 'conditional', checkPrompt: 'ele respondeu?',
+  })
+  await wpp.decide(outbox.get(d.id))
+  assert.match(promptVisto, /09:00/)
+})

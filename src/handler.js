@@ -176,7 +176,7 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
 
     async schedulers() {
       if (!semConta()) return
-      return reply(formatQueue({ pending: wpp.outbox.pending(), scheduled: wpp.outbox.scheduled() }))
+      return reply(formatQueue({ pending: wpp.outbox.pending(), scheduled: wpp.outbox.scheduled() }, wpp.timezone))
     },
 
     async undo() {

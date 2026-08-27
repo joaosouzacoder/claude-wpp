@@ -26,6 +26,11 @@ date                                    # you do NOT know what time it is — ru
 `date` first, always, before anything involving "tomorrow", "at 9", "later".
 Your idea of the current date is wrong.
 
+**The host clock is very likely UTC while João is not.** So never build a time
+from `date` output alone: write the offset he lives in explicitly
+(`-03:00` for Brasília) and let the tool convert. `--at '…T09:00:00-03:00'`
+means nine in his morning no matter what the server thinks.
+
 ## The log
 
 Everything João's personal account receives and sends is recorded. Two tables.

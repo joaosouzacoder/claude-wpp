@@ -2,8 +2,12 @@ import { citacaoDe } from './whatsapp.js'
 
 const CONTEXTO_MAX = 60
 
-function quando(ts) {
-  return new Date(ts * 1000).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+// The host may well run in UTC while the person reading this thinks in their own
+// zone. Showing the machine's hour would make him reject a draft that was right.
+export function quando(ts, timezone) {
+  return new Date(ts * 1000).toLocaleString('pt-BR', {
+    dateStyle: 'short', timeStyle: 'short', ...(timezone ? { timeZone: timezone } : {}),
+  })
 }
 
 function nomeDo(job) {
@@ -22,20 +26,20 @@ export function parseVeredito(texto) {
   }
 }
 
-export function formatDraft(job) {
+export function formatDraft(job, timezone) {
   const linhas = [`[wpp] rascunho #${job.id} → ${nomeDo(job)}`]
-  if (job.scheduled_for) linhas.push(`sai em ${quando(job.scheduled_for)}`)
+  if (job.scheduled_for) linhas.push(`sai em ${quando(job.scheduled_for, timezone)}`)
   if (job.kind === 'conditional') linhas.push(`antes de mandar, verifica: ${job.check_prompt}`)
   linhas.push('', `"${job.body}"`, '', `/ok ${job.id} aprova · /no ${job.id} descarta`)
   return linhas.join('\n')
 }
 
-export function formatQueue({ pending, scheduled }) {
+export function formatQueue({ pending, scheduled }, timezone) {
   if (!pending.length && !scheduled.length) return '[wpp] nada pendente e nada agendado.'
 
   const linha = (j) => {
     const marca = j.kind === 'conditional' ? ' (verifica antes)' : ''
-    const hora = j.scheduled_for ? `${quando(j.scheduled_for)} · ` : ''
+    const hora = j.scheduled_for ? `${quando(j.scheduled_for, timezone)} · ` : ''
     return `#${j.id} ${hora}${nomeDo(j)}${marca}: "${j.body}"`
   }
 
@@ -46,6 +50,7 @@ export function formatQueue({ pending, scheduled }) {
 }
 
 export function createWpp({ db, outbox, wa, run, config, now = () => Math.floor(Date.now() / 1000) }) {
+  const tz = config.timezone
   const buscarCitada = db.prepare('SELECT * FROM messages WHERE chat_jid = ? AND wa_id = ?')
   const conversaDesde = db.prepare(`
     SELECT sender_name, from_me, ts, body FROM messages
@@ -82,7 +87,7 @@ export function createWpp({ db, outbox, wa, run, config, now = () => Math.floor(
   async function decide(job) {
     const desde = job.created_at ?? 0
     const conversa = conversaDesde.all(job.chat_jid, desde, CONTEXTO_MAX)
-      .map((m) => `${m.from_me ? 'eu' : (m.sender_name ?? 'ele/ela')} (${quando(m.ts)}): ${m.body}`)
+      .map((m) => `${m.from_me ? 'eu' : (m.sender_name ?? 'ele/ela')} (${quando(m.ts, tz)}): ${m.body}`)
       .join('\n')
 
     const prompt = [
@@ -95,7 +100,7 @@ export function createWpp({ db, outbox, wa, run, config, now = () => Math.floor(
       '',
       `Verifique antes de mandar: ${job.check_prompt}`,
       '',
-      `Conversa com ${nomeDo(job)} desde que isso foi agendado (${quando(desde)}):`,
+      `Conversa com ${nomeDo(job)} desde que isso foi agendado (${quando(desde, tz)}):`,
       conversa || '(nenhuma mensagem nova nessa conversa desde então)',
       '',
       'Se a conversa não responder claramente à verificação, responda ENVIAR.',
@@ -112,5 +117,5 @@ export function createWpp({ db, outbox, wa, run, config, now = () => Math.floor(
     return parseVeredito(r.text)
   }
 
-  return { send, undo, decide, now }
+  return { send, undo, decide, now, timezone: tz }
 }

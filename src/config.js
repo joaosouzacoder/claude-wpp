@@ -16,6 +16,7 @@ const DEFAULTS = {
   transcribeModel: 'gpt-4o-transcribe',
   transcribeTimeoutMs: 120000,
   personalNumber: null,
+  timezone: 'America/Sao_Paulo',
   schedulerIntervalMs: 30000,
   scheduleToleranceSec: 3600,
 }

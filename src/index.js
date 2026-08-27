@@ -75,7 +75,12 @@ async function main() {
       outbox,
       wa: me,
       run: runClaude,
-      config: { claudeBin: config.claudeBin, agentCwd: config.agentCwd, timeoutMs: config.timeoutMs },
+      config: {
+        claudeBin: config.claudeBin,
+        agentCwd: config.agentCwd,
+        timeoutMs: config.timeoutMs,
+        timezone: config.timezone,
+      },
     })
 
     const scheduler = createScheduler({
@@ -84,6 +89,7 @@ async function main() {
       decide: wpp.decide,
       notify: avisar,
       toleranceSec: config.scheduleToleranceSec,
+      timezone: config.timezone,
       intervalMs: config.schedulerIntervalMs,
       log,
     })
@@ -103,6 +109,7 @@ async function main() {
       outbox: pessoal.outbox,
       agentCwd: config.agentCwd,
       tick: pessoal.scheduler.tick,
+      timezone: config.timezone,
       undo: pessoal.wpp.undo,
     },
   })
@@ -114,7 +121,7 @@ async function main() {
     whatsapp,
     sessionCount: () => sessions.list().length,
     outbox: pessoal?.outbox ?? null,
-    onDraft: pessoal ? (job) => avisar(formatDraft(job)) : null,
+    onDraft: pessoal ? (job) => avisar(formatDraft(job, config.timezone)) : null,
     personalState: pessoal ? () => pessoal.me.state() : null,
   })
 

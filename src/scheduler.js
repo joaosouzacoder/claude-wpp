@@ -2,11 +2,9 @@
 // the authorized number beforehand — a conditional job only gets a vote on
 // *whether* to send, never on *what* to send.
 
-const UMA_HORA = 3600
+import { quando } from './wpp.js'
 
-function quando(ts) {
-  return new Date(ts * 1000).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
-}
+const UMA_HORA = 3600
 
 function comoChamar(job) {
   return job.chat_name || job.chat_jid.split('@')[0]
@@ -19,6 +17,7 @@ export function createScheduler({
   notify,
   now = () => Math.floor(Date.now() / 1000),
   toleranceSec = UMA_HORA,
+  timezone = null,
   intervalMs = 30000,
   log = console,
 }) {
@@ -31,7 +30,7 @@ export function createScheduler({
     const minutos = Math.round((agora - job.scheduled_for) / 60)
     outbox.reopen(job.id, `atrasado ${minutos}min`)
     await avisar(
-      `[wpp] #${job.id} estava marcada para ${quando(job.scheduled_for)} e atrasou ${minutos}min — não mandei fora de hora.\n` +
+      `[wpp] #${job.id} estava marcada para ${quando(job.scheduled_for, timezone)} e atrasou ${minutos}min — não mandei fora de hora.\n` +
       `Para ${comoChamar(job)}: "${job.body}"\n/ok ${job.id} manda agora, /no ${job.id} descarta.`,
     )
   }
