@@ -21,7 +21,7 @@ test('aplica os defaults quando o arquivo só traz o obrigatório', () => {
   assert.equal(cfg.apiHost, '127.0.0.1')
   assert.equal(cfg.apiPort, 8787)
   assert.equal(cfg.slowNoticeMs, 8000)
-  assert.equal(cfg.timeoutMs, 900000)
+  assert.equal(cfg.timeoutMs, null, 'sem teto de tempo por padrão')
   assert.equal(cfg.maxMessageChars, 3500)
   assert.equal(cfg.claudeBin, 'claude')
   assert.equal(cfg.defaultCwd, homedir())

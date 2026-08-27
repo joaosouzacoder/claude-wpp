@@ -71,7 +71,11 @@ video is read, as before.
 | `mediaDir` | `<stateDir>/media` | where received media is written |
 
 When something takes longer than 8 seconds, the bot replies `Trabalhando nisso.`
-once and sends the result afterwards. Every reply is prefixed with
+once and sends the result afterwards.
+
+There is no time ceiling: a job that needs an hour gets an hour. The cost is
+that a stuck run holds its session until you send `/stop`, so nothing queued
+behind it moves. Set `timeoutMs` in milliseconds if you would rather have a cap. Every reply is prefixed with
 `[session-name]`, because with parallel sessions they arrive out of order.
 
 Example:

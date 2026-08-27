@@ -92,3 +92,28 @@ test('bin inexistente vira erro, não exceção', async () => {
   assert.equal(r.ok, false)
   assert.ok(r.error.length > 0)
 })
+
+// O João não quer teto de tempo: uma tarefa longa não pode ser morta no meio só
+// porque passou de um número. Sem teto, quem interrompe é o /stop.
+test('sem timeoutMs configurado, não existe teto: a execução longa termina', async () => {
+  process.env.FAKE_MODE = 'slow'
+  const r = await runClaude({ ...base, timeoutMs: null, slowNoticeMs: 10 })
+  assert.equal(r.ok, true)
+  assert.equal(r.text, 'demorei')
+})
+
+test('teto zero também significa sem teto, não matar na hora', async () => {
+  process.env.FAKE_MODE = 'slow'
+  const r = await runClaude({ ...base, timeoutMs: 0 })
+  assert.equal(r.ok, true)
+  assert.equal(r.text, 'demorei')
+})
+
+test('sem teto, o abort continua sendo a forma de interromper', async () => {
+  process.env.FAKE_MODE = 'hang'
+  const ac = new AbortController()
+  setTimeout(() => ac.abort(), 100)
+  const r = await runClaude({ ...base, timeoutMs: null, signal: ac.signal })
+  assert.equal(r.ok, false)
+  assert.match(r.error, /interrompid/i)
+})

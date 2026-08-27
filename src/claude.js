@@ -6,7 +6,7 @@ export function runClaude({
   prompt,
   sessionId = null,
   slowNoticeMs = 8000,
-  timeoutMs = 900000,
+  timeoutMs = null,
   onSlow,
   signal,
 } = {}) {
@@ -45,10 +45,14 @@ export function runClaude({
       if (!finalizado) onSlow?.()
     }, slowNoticeMs)
 
-    const timerLimite = setTimeout(() => {
-      motivo = 'timeout'
-      matarGrupo()
-    }, timeoutMs)
+    // No cap by default: a long job must not be killed for passing a number.
+    // `null` and `0` both mean "no ceiling"; /stop is what interrupts.
+    const timerLimite = timeoutMs
+      ? setTimeout(() => {
+        motivo = 'timeout'
+        matarGrupo()
+      }, timeoutMs)
+      : null
 
     const aoAbortar = () => {
       motivo = 'abort'

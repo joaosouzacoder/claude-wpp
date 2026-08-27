@@ -10,7 +10,7 @@ const DEFAULTS = {
   claudeBin: 'claude',
   defaultCwd: homedir(),
   slowNoticeMs: 8000,
-  timeoutMs: 900000,
+  timeoutMs: null,
   maxMessageChars: 3500,
   openaiApiKey: null,
   transcribeModel: 'gpt-4o-transcribe',
