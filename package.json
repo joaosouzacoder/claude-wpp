@@ -29,6 +29,7 @@
   "scripts": {
     "start": "node src/index.js",
     "pair": "node src/pair.js",
+    "pair:me": "node src/pair.js me",
     "test": "node --test"
   },
   "dependencies": {

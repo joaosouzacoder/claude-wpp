@@ -2,6 +2,9 @@ import { rmSync } from 'node:fs'
 import { parse } from './router.js'
 import { chunkText } from './text.js'
 import { promptComImagem } from './media.js'
+import { formatQueue } from './wpp.js'
+
+const SESSAO_WPP = 'wpp'
 
 const AJUDA = [
   'Comandos:',
@@ -13,9 +16,22 @@ const AJUDA = [
   '/help — isto aqui',
   '@nome texto — manda pra outra sessão sem trocar a ativa',
   '',
+  'Sua conta pessoal:',
+  '/wpp <pedido> — lê suas conversas e prepara uma mensagem',
+  '/ok <n> — aprova o rascunho n (só assim ele sai)',
+  '/no <n> — descarta o rascunho ou cancela o agendamento n',
+  '/schedulers — o que espera seu ok e o que está agendado',
+  '/undo — apaga a última mensagem que mandei por você',
+  '',
   'Áudio vira texto e segue como se você tivesse digitado (comandos inclusive).',
   'Imagem vai junto do pedido; a legenda é o prompt.',
 ].join('\n')
+
+// Accepts "3", "#3" and "d3" — you are typing this on a phone.
+function numeroDoRascunho(bruto) {
+  const digitos = String(bruto ?? '').replace(/[^0-9]/g, '')
+  return digitos ? Number(digitos) : null
+}
 
 function ociosidade(iso) {
   const ms = Date.now() - new Date(iso).getTime()
@@ -25,7 +41,7 @@ function ociosidade(iso) {
   return `${Math.floor(min / 60)}h`
 }
 
-export function createHandler({ sessions, run, transcribe, reply, config }) {
+export function createHandler({ sessions, run, transcribe, reply, config, wpp = null }) {
   async function responder(nome, texto) {
     for (const pedaco of chunkText(texto, config.maxMessageChars)) {
       await reply(`[${nome}] ${pedaco}`)
@@ -123,6 +139,58 @@ export function createHandler({ sessions, run, transcribe, reply, config }) {
     async help() {
       return reply(AJUDA)
     },
+
+    // The personal account lives in its own session so that a request about
+    // your conversations never lands in whatever project session is active.
+    async wpp(args) {
+      if (!semConta()) return
+      const pedido = args.join(' ').trim()
+      if (!pedido) return reply('Uso: /wpp <o que você quer que eu faça na sua conta>')
+
+      const sessao = sessions.get(SESSAO_WPP)
+        ?? sessions.create({ cwd: wpp.agentCwd, name: SESSAO_WPP, activate: false })
+      return despachar(sessao, pedido)
+    },
+
+    async ok(args) {
+      if (!semConta()) return
+      const id = numeroDoRascunho(args[0])
+      if (!id) return reply('Uso: /ok <número do rascunho>')
+
+      const job = wpp.outbox.approve(id)
+      if (!job) return reply(`Não achei rascunho pendente #${id}. Manda /schedulers.`)
+
+      await reply(job.scheduled_for ? `Aprovado. #${id} sai na hora marcada.` : `Aprovado, mandando #${id}.`)
+      return wpp.tick()
+    },
+
+    async no(args) {
+      if (!semConta()) return
+      const id = numeroDoRascunho(args[0])
+      if (!id) return reply('Uso: /no <número do rascunho>')
+
+      const job = wpp.outbox.reject(id) ?? wpp.outbox.cancel(id)
+      if (!job) return reply(`Não achei nada aberto com o número #${id}.`)
+      return reply(job.status === 'canceled' ? `Agendamento #${id} cancelado.` : `Rascunho #${id} descartado.`)
+    },
+
+    async schedulers() {
+      if (!semConta()) return
+      return reply(formatQueue({ pending: wpp.outbox.pending(), scheduled: wpp.outbox.scheduled() }))
+    },
+
+    async undo() {
+      if (!semConta()) return
+      const r = await wpp.undo()
+      if (!r.ok) return reply(`Não deu pra desfazer: ${r.error}`)
+      return reply(`Apaguei a mensagem para ${r.job.chat_name || r.job.chat_jid}: "${r.job.body}"`)
+    },
+  }
+
+  function semConta() {
+    if (wpp) return true
+    reply('Conta pessoal não configurada. Veja o README para parear com `npm run pair:me`.').catch(() => {})
+    return false
   }
 
   // Audio only exists to become text: transcribe, drop the file, then follow the

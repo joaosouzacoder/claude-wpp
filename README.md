@@ -34,6 +34,11 @@ systemctl --user start claude-wpp
 | `/end [name]` | ends the session |
 | `/stop` | interrupts whatever the active session is doing |
 | `/help` | lists the commands |
+| `/wpp <request>` | reads your own WhatsApp and prepares a message (see below) |
+| `/ok <n>` | approves draft `n` — the only way anything gets sent |
+| `/no <n>` | discards a draft or cancels a schedule |
+| `/schedulers` | what is waiting for your approval and what is scheduled |
+| `/undo` | deletes the last message sent on your behalf |
 | `@name text` | sends to another session without switching the active one |
 | bare text | goes to the active session |
 | voice note or audio | transcribed, then treated as if you had typed it |
@@ -82,6 +87,93 @@ list the failing tests
 > [infra] /dev/sda1 at 81%
 ```
 
+## Your own WhatsApp
+
+The bot has its own number. Optionally, a **second account — yours** — can be
+paired so Claude can read your real conversations and write messages as you.
+This is off unless you turn it on.
+
+```bash
+# config.json
+"personalNumber": "5511911111111"
+
+npm run pair:me                       # scan the QR with your own phone
+systemctl --user restart claude-wpp
+```
+
+**Read [SECURITY.md](SECURITY.md) first.** Two things change materially: every
+message that account sends or receives is recorded to a local SQLite database
+with no expiry, including in groups whose members never agreed to it; and
+automating a personal account breaks the WhatsApp Terms of Service, so the
+account can be banned.
+
+The account only ever **records**. Nothing arriving on your personal WhatsApp
+triggers Claude — there is no code path from an incoming message to an action.
+It acts when you ask it to, from the bot's chat.
+
+### Asking for something
+
+```
+/wpp look at the leaders group and answer John Doe — the migration slips a week
+
+> [wpp] John Doe asked on Tuesday whether it was still on for the 29th.
+> [wpp] draft #3 → Team Leads (replying to John Doe)
+>       "Fala John Doe, a migração vai ficar pra semana que vem..."
+>       /ok 3 approves · /no 3 discards
+
+/ok 3
+> Aprovado, mandando #3.
+> [wpp] mandei para Team Leads: "..." — /undo desfaz.
+```
+
+Claude reads the log with SQL and proposes. **It cannot send.** A draft sits as
+`pending` until you reply `/ok`, and `/undo` deletes the last message sent as
+long as WhatsApp still allows deleting it for everyone.
+
+### Scheduling
+
+```
+/wpp remind Jane Doe tomorrow at 9 to bring the macbook,
+    but check first whether he already answered
+
+> [wpp] draft #4 → Jane Doe — sai em 28/08/2026, 09:00
+>       antes de mandar, verifica: ele já confirmou que traz o macbook?
+>       "Bom dia! Lembra de trazer o macbook hoje."
+>       /ok 4 aprova · /no 4 descarta
+```
+
+A **conditional** job is checked again the moment before it fires: Claude reads
+that conversation since you scheduled it and answers send-or-skip, with a
+reason. It votes on *whether* to send — never on *what*, because you approved
+those exact words.
+
+If the machine was down past the deadline, the job goes back to pending and asks
+instead of sending a "good morning" in the afternoon (`scheduleToleranceSec`,
+one hour by default).
+
+### The log
+
+`~/.local/state/claude-wpp/wpp.db`, two tables, queryable with plain SQL:
+
+```sql
+chats(jid, name, kind, updated_at)
+messages(id, wa_id, chat_jid, sender_jid, sender_name,
+         from_me, ts, kind, body, quoted_wa_id)
+```
+
+Media is never downloaded — an audio message is stored as `[áudio 0:14]`. Text
+search runs through an FTS5 index. Pairing replays a slice of recent history, so
+the database is not empty on day one.
+
+`agent/CLAUDE.md` is what teaches the `/wpp` session how to use all this; edit it
+to change how Claude writes as you.
+
+| Key | Default | What it does |
+|---|---|---|
+| `personalNumber` | `null` | your number; the whole feature is off while this is unset |
+| `schedulerIntervalMs` | `30000` | how often the queue is checked |
+| `scheduleToleranceSec` | `3600` | past this delay, a late job asks instead of firing |
+
 ## Local API
 
 ```bash
@@ -92,6 +184,10 @@ curl -X POST localhost:8787/send \
 
 curl localhost:8787/healthz
 ```
+
+`POST /outbox` proposes a draft for the personal account. It never sends: the
+draft waits for `/ok` on WhatsApp. It is how `agent/propose.mjs` works, and the
+only write path Claude is given.
 
 ## Operation
 

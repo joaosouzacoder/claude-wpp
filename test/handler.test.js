@@ -7,6 +7,8 @@ import { createStore } from '../src/store.js'
 import { createSessions } from '../src/sessions.js'
 import { createHandler } from '../src/handler.js'
 import { transcribe as transcribeReal } from '../src/transcribe.js'
+import { openDb } from '../src/db.js'
+import { createOutbox } from '../src/outbox.js'
 
 function montar({ run, transcribe, config } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'handler-'))
@@ -374,4 +376,119 @@ test('sem chave da OpenAI o áudio avisa que falta a chave e o texto segue funci
 
   await handler.handle('e o texto?')
   assert.equal(ditos.at(-1), '[s1] resposta')
+})
+
+// --- conta pessoal (/wpp) ---
+
+function montarComWpp({ run, undo } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'handler-wpp-'))
+  const db = openDb(':memory:')
+  const outbox = createOutbox({ db, now: () => 1000 })
+  const ditos = []
+  const passadas = []
+
+  const handler = createHandler({
+    sessions: createSessions({ store: createStore(join(dir, 'state.json')), defaultCwd: dir }),
+    run: run ?? (async () => ({ ok: true, text: 'rascunho pronto', sessionId: 'sid', error: null })),
+    transcribe: async () => ({ ok: true, text: '', error: null }),
+    reply: async (t) => { ditos.push(t) },
+    config: { slowNoticeMs: 10, timeoutMs: 1000, maxMessageChars: 500, claudeBin: 'claude', defaultCwd: dir },
+    wpp: {
+      outbox,
+      agentCwd: dir,
+      tick: async () => { passadas.push(1) },
+      undo: undo ?? (async () => ({ ok: true, job: { chat_name: 'Jane Doe', body: 'traz o macbook' } })),
+    },
+  })
+
+  const rascunho = (extra = {}) =>
+    outbox.create({ chatJid: '5@s.whatsapp.net', chatName: 'Jane Doe', body: 'traz o macbook', ...extra })
+
+  return { handler, outbox, ditos, passadas, rascunho }
+}
+
+test('/wpp manda o pedido para a sessão dedicada, sem trocar a ativa', async () => {
+  const { handler, ditos } = montarComWpp()
+  await handler.handle('/new ~ trabalho')
+  await handler.handle('/wpp olhe o grupo de líderes')
+  assert.match(ditos.at(-1), /^\[wpp\]/)
+  await handler.handle('/ls')
+  assert.match(ditos.at(-1), /\* trabalho/)
+})
+
+test('/ok aprova e faz a mensagem sair na hora', async () => {
+  const { handler, outbox, ditos, passadas, rascunho } = montarComWpp()
+  const d = rascunho()
+  await handler.handle(`/ok ${d.id}`)
+  assert.equal(outbox.get(d.id).status, 'approved')
+  assert.equal(passadas.length, 1)
+  assert.match(ditos.at(-1), /aprovad/i)
+})
+
+test('/ok em rascunho que não existe não inventa nada', async () => {
+  const { handler, ditos, passadas } = montarComWpp()
+  await handler.handle('/ok 99')
+  assert.match(ditos.at(-1), /não achei/i)
+  assert.equal(passadas.length, 0)
+})
+
+test('/ok duas vezes não manda duas vezes', async () => {
+  const { handler, passadas, rascunho } = montarComWpp()
+  const d = rascunho()
+  await handler.handle(`/ok ${d.id}`)
+  await handler.handle(`/ok ${d.id}`)
+  assert.equal(passadas.length, 1)
+})
+
+test('/no descarta o rascunho pendente', async () => {
+  const { handler, outbox, rascunho } = montarComWpp()
+  const d = rascunho()
+  await handler.handle(`/no ${d.id}`)
+  assert.equal(outbox.get(d.id).status, 'rejected')
+})
+
+test('/no cancela um agendamento que você já tinha aprovado', async () => {
+  const { handler, outbox, rascunho } = montarComWpp()
+  const d = rascunho({ scheduledFor: 9999 })
+  outbox.approve(d.id)
+  await handler.handle(`/no ${d.id}`)
+  assert.equal(outbox.get(d.id).status, 'canceled')
+})
+
+test('/schedulers mostra o que espera ok e o que está agendado', async () => {
+  const { handler, outbox, ditos, rascunho } = montarComWpp()
+  rascunho()
+  const agendado = rascunho({ scheduledFor: 1756382400 })
+  outbox.approve(agendado.id)
+
+  await handler.handle('/schedulers')
+  assert.match(ditos.at(-1), /Jane Doe/)
+  assert.match(ditos.at(-1), /Agendadas/)
+})
+
+test('/undo conta o que apagou', async () => {
+  const { handler, ditos } = montarComWpp()
+  await handler.handle('/undo')
+  assert.match(ditos.at(-1), /Jane Doe/)
+})
+
+test('/undo que falha explica o motivo', async () => {
+  const { handler, ditos } = montarComWpp({ undo: async () => ({ ok: false, error: 'tarde demais' }) })
+  await handler.handle('/undo')
+  assert.match(ditos.at(-1), /tarde demais/)
+})
+
+test('sem conta pessoal configurada, os comandos avisam em vez de quebrar', async () => {
+  const { handler, ditos } = montar()
+  for (const cmd of ['/wpp oi', '/ok 1', '/no 1', '/undo', '/schedulers']) {
+    await handler.handle(cmd)
+    assert.match(ditos.at(-1), /conta pessoal/i, `falhou em ${cmd}`)
+  }
+})
+
+test('/help cita os comandos da conta pessoal', async () => {
+  const { handler, ditos } = montarComWpp()
+  await handler.handle('/help')
+  assert.match(ditos.at(-1), /\/wpp/)
+  assert.match(ditos.at(-1), /\/schedulers/)
 })

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const DEFAULTS = {
   apiHost: '127.0.0.1',
@@ -15,6 +15,9 @@ const DEFAULTS = {
   openaiApiKey: null,
   transcribeModel: 'gpt-4o-transcribe',
   transcribeTimeoutMs: 120000,
+  personalNumber: null,
+  schedulerIntervalMs: 30000,
+  scheduleToleranceSec: 3600,
 }
 
 const ENV_MAP = {
@@ -45,8 +48,15 @@ export function loadConfig({ path = join(homedir(), 'claude-wpp', 'config.json')
     if (!cfg[campo]) throw new Error(`config inválido: ${campo} é obrigatório`)
   }
 
-  // Derived after the overrides, so it follows whoever moves the stateDir.
+  // Derived after the overrides, so they follow whoever moves the stateDir.
   cfg.mediaDir ??= join(cfg.stateDir, 'media')
+  cfg.botAuthDir ??= join(cfg.stateDir, 'wa-auth')
+  cfg.personalAuthDir ??= join(cfg.stateDir, 'wa-auth-me')
+  cfg.dbPath ??= join(cfg.stateDir, 'wpp.db')
+
+  // The session that answers /wpp works here: its CLAUDE.md is what teaches it
+  // to read the log and to propose instead of sending.
+  cfg.agentCwd ??= join(dirname(path), 'agent')
 
   return cfg
 }

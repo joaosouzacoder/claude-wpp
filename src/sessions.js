@@ -55,7 +55,7 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
     get: (name) => sessions.find((s) => s.name === name),
     active: () => sessions.find((s) => s.name === activeSession),
 
-    create({ cwd, name } = {}) {
+    create({ cwd, name, activate = true } = {}) {
       const nome = name?.trim() || proximoNome()
       if (!NOME_VALIDO.test(nome)) {
         throw new Error('nome inválido: use até 24 caracteres entre letras, números, - e _')
@@ -73,7 +73,7 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
         abort: null,
       }
       sessions.push(sessao)
-      activeSession = nome
+      if (activate) activeSession = nome
       persist()
       return sessao
     },

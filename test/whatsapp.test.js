@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { classificar } from '../src/whatsapp.js'
+import { classificar, aceitaDoBot } from '../src/whatsapp.js'
 
 test('mensagem de texto simples continua sendo texto', () => {
   assert.deepEqual(classificar({ message: { conversation: 'oi claude' } }), {
@@ -47,4 +47,34 @@ test('mensagem sem conteúdo conhecido vira texto vazio', () => {
   assert.equal(classificar({ message: { stickerMessage: {} } }).text, '')
   assert.equal(classificar({ message: null }).text, '')
   assert.equal(classificar({}).text, '')
+})
+
+// --- política de aceitação do bot ---
+// Esta é a fronteira de segurança do projeto: quem passa daqui roda comando
+// nesta máquina. A conta pessoal usa outra política e não chama o handler.
+
+test('o bot aceita o número autorizado', () => {
+  assert.equal(aceitaDoBot({ remoteJid: '5511911111111@s.whatsapp.net' }, '5511911111111'), true)
+})
+
+test('o bot ignora qualquer outro remetente', () => {
+  assert.equal(aceitaDoBot({ remoteJid: '5511999999999@s.whatsapp.net' }, '5511911111111'), false)
+})
+
+test('o bot ignora grupo, mesmo com o número autorizado dentro', () => {
+  const key = { remoteJid: '1-2@g.us', participant: '5511911111111@s.whatsapp.net' }
+  assert.equal(aceitaDoBot(key, '5511911111111'), false)
+})
+
+test('o bot ignora a própria mensagem, senão responde a si mesmo', () => {
+  const key = { remoteJid: '5511911111111@s.whatsapp.net', fromMe: true }
+  assert.equal(aceitaDoBot(key, '5511911111111'), false)
+})
+
+test('o bot tolera o nono dígito do celular brasileiro', () => {
+  assert.equal(aceitaDoBot({ remoteJid: '551111111111@s.whatsapp.net' }, '5511911111111'), true)
+})
+
+test('o bot recusa quando só existe @lid, sem número real junto', () => {
+  assert.equal(aceitaDoBot({ remoteJid: '99999@lid' }, '5511911111111'), false)
 })
