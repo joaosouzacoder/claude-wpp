@@ -155,3 +155,74 @@ test('sem conta pessoal ligada, /outbox responde 503 em vez de fingir', async ()
   assert.equal(r.status, 503)
   await semOutbox.close()
 })
+
+// --- POST /wpp: a mesma porta do /wpp digitado no WhatsApp, de outra máquina ---
+
+let apiWpp, baseWpp
+const pedidos = []
+let travar = null
+
+before(async () => {
+  apiWpp = createApi({
+    host: '127.0.0.1', port: 0, token: 'segredo', whatsapp,
+    onWpp: (pedido) => { pedidos.push(pedido); return travar },
+  })
+  baseWpp = `http://127.0.0.1:${await apiWpp.listen()}`
+})
+
+after(async () => { await apiWpp.close() })
+
+const pedir = (corpo, token = 'segredo') => fetch(`${baseWpp}/wpp`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+  body: JSON.stringify(corpo),
+})
+
+test('wpp sem token é 401', async () => {
+  assert.equal((await pedir({ request: 'oi' }, 'errado')).status, 401)
+})
+
+test('wpp aceita o pedido e o entrega inteiro', async () => {
+  const r = await pedir({ request: 'responde o Fulano que a migração atrasou' })
+  assert.equal(r.status, 202)
+  assert.deepEqual(await r.json(), { ok: true, queued: true })
+  assert.equal(pedidos.at(-1), 'responde o Fulano que a migração atrasou')
+})
+
+test('wpp sem request é 400', async () => {
+  assert.equal((await pedir({ request: '   ' })).status, 400)
+})
+
+test('wpp com json inválido é 400', async () => {
+  const r = await fetch(`${baseWpp}/wpp`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer segredo' },
+    body: '{ nao e json',
+  })
+  assert.equal(r.status, 400)
+})
+
+test('GET em /wpp é 405', async () => {
+  assert.equal((await fetch(`${baseWpp}/wpp`)).status, 405)
+})
+
+// Uma rodada do Claude leva o tempo que levar e responde no WhatsApp. Se a
+// resposta HTTP esperasse por ela, todo pedido de verdade morreria em timeout.
+test('wpp responde sem esperar a rodada terminar', async () => {
+  travar = new Promise(() => {})
+  const r = await pedir({ request: 'algo demorado' })
+  assert.equal(r.status, 202)
+  travar = null
+})
+
+test('sem conta pessoal ligada, /wpp responde 503 em vez de fingir', async () => {
+  const semWpp = createApi({ host: '127.0.0.1', port: 0, token: 'segredo', whatsapp })
+  const porta = await semWpp.listen()
+  const r = await fetch(`http://127.0.0.1:${porta}/wpp`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer segredo' },
+    body: JSON.stringify({ request: 'oi' }),
+  })
+  assert.equal(r.status, 503)
+  await semWpp.close()
+})

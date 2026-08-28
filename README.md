@@ -194,20 +194,43 @@ to change how Claude writes as you.
 | `schedulerIntervalMs` | `30000` | how often the queue is checked |
 | `scheduleToleranceSec` | `3600` | past this delay, a late job asks instead of firing |
 
-## Local API
+## The API
+
+The service binds to `apiHost:apiPort`, `127.0.0.1:8787` by default. Move it off
+loopback only knowing what that exposes: whoever holds the token sends WhatsApp
+messages as the bot and starts a Claude run on this machine. A private overlay
+address — Tailscale, WireGuard — reaches your other devices without putting any
+of that on a public interface.
 
 ```bash
-curl -X POST localhost:8787/send \
+curl -X POST $HOST/send \
   -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{"to":"5511911111111","text":"hi"}'
 
-curl localhost:8787/healthz
+curl -X POST $HOST/wpp \
+  -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"request":"answer John in the leaders group - the migration slips a week"}'
+
+curl $HOST/healthz
 ```
 
-`POST /outbox` proposes a draft for the personal account. It never sends: the
-draft waits for `/ok` on WhatsApp. It is how `agent/propose.mjs` works, and the
-only write path Claude is given.
+`POST /send` writes as the **bot**, immediately. `POST /wpp` is the `/wpp`
+command reached from anywhere: it rebuilds the request and hands it to the same
+handler, so it runs the same session under the same `agent/CLAUDE.md` and cannot
+drift from what typing `/wpp` does. It answers `202` the moment the request is
+queued — the run takes as long as it takes and reports on WhatsApp, which is
+where the draft waits for your `/ok` regardless.
+
+`POST /outbox` proposes a draft directly. It never sends either: the draft waits
+for `/ok` on WhatsApp. It is how `agent/propose.mjs` works, and the only write
+path Claude is given.
+
+| Key | Default | What it does |
+|---|---|---|
+| `apiHost` | `127.0.0.1` | address the API binds to |
+| `apiPort` | `8787` | port the API binds to |
 
 ## Operation
 

@@ -30,6 +30,7 @@ export function createApi({
   sessionCount = () => 0,
   outbox = null,
   onDraft = null,
+  onWpp = null,
   personalState = null,
 }) {
   const json = (res, status, corpo) => {
@@ -83,6 +84,31 @@ export function createApi({
         // Losing the notification must not lose the draft; /schedulers finds it.
       }
       return json(res, 200, { ok: true, id: rascunho.id, status: rascunho.status })
+    }
+
+    // The same door as `/wpp` typed on WhatsApp, for the machines that are not
+    // this one. It still only proposes: the draft it produces waits for an `/ok`
+    // like every other, and the answer lands on WhatsApp — which is where that
+    // `/ok` has to be typed anyway.
+    if (url.pathname === '/wpp') {
+      if (req.method !== 'POST') return json(res, 405, { ok: false, error: 'método não permitido' })
+      if (!autorizado()) return json(res, 401, { ok: false, error: 'não autorizado' })
+      if (!onWpp) return json(res, 503, { ok: false, error: 'conta pessoal não configurada' })
+
+      let corpo
+      try {
+        corpo = JSON.parse(await lerBody(req))
+      } catch {
+        return json(res, 400, { ok: false, error: 'json inválido' })
+      }
+
+      const pedido = String(corpo?.request ?? '').trim()
+      if (!pedido) return json(res, 400, { ok: false, error: 'request é obrigatório' })
+
+      // A run takes as long as Claude takes, and reports on WhatsApp when it is
+      // done. Holding the connection open for that would only ever time out.
+      onWpp(pedido)
+      return json(res, 202, { ok: true, queued: true })
     }
 
     if (url.pathname === '/send') {

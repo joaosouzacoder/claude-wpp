@@ -149,6 +149,13 @@ async function main() {
     sessionCount: () => sessions.list().length,
     outbox: pessoal?.outbox ?? null,
     onDraft: pessoal ? (job) => avisar(formatDraft(job, config.timezone)) : null,
+    // Rebuilding the request as `/wpp <pedido>` and handing it to the same
+    // handler is what makes the HTTP route and the typed command the same
+    // thing: one implementation, one set of instructions, no way to drift. It
+    // also pins the command — a caller cannot reach `/ok` or another session.
+    onWpp: pessoal
+      ? (pedido) => { handler.handle(`/wpp ${pedido}`).catch((e) => log.error(e.stack ?? e.message)) }
+      : null,
     personalState: pessoal ? () => pessoal.me.state() : null,
   })
 

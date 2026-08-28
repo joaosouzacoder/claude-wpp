@@ -65,3 +65,12 @@ test('rest preserva quebra de linha', () => {
 test('comando sem argumento tem rest vazio', () => {
   assert.equal(parse('/ls').rest, '')
 })
+
+// A rota HTTP monta `/wpp <pedido>` e entrega ao mesmo handler. Se um pedido
+// que começa com barra virasse um segundo comando, quem chama a API pela rede
+// alcançaria /ok — e aprovaria o próprio rascunho sem passar pelo dono.
+test('o que vem depois de /wpp é texto, nunca um segundo comando', () => {
+  assert.deepEqual(parse('/wpp /ok 5'), {
+    type: 'command', name: 'wpp', args: ['/ok', '5'], rest: '/ok 5',
+  })
+})
