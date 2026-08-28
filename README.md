@@ -210,9 +210,14 @@ to change how Claude writes as you.
 
 The service binds to `apiHost:apiPort`, `127.0.0.1:8787` by default. Move it off
 loopback only knowing what that exposes: whoever holds the token sends WhatsApp
-messages as the bot and starts a Claude run on this machine. A private overlay
-address — Tailscale, WireGuard — reaches your other devices without putting any
-of that on a public interface.
+messages as the bot and starts a Claude run on this machine, which runs with
+permission checks disabled. A private overlay address — Tailscale, WireGuard —
+reaches your other devices without putting any of that on a public interface.
+
+There is no TLS here. On a public address the bearer token crosses the network
+in cleartext on every call, so anyone on the path collects it and keeps it. If
+the API has to be reachable from the internet, put it behind a reverse proxy
+that terminates HTTPS and leave this bound to loopback.
 
 ```bash
 curl -X POST $HOST/send \
