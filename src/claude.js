@@ -6,6 +6,7 @@ export function runClaude({
   prompt,
   sessionId = null,
   slowNoticeMs = 8000,
+  heartbeatMs = null,
   timeoutMs = null,
   onSlow,
   signal,
@@ -14,6 +15,7 @@ export function runClaude({
     const args = ['-p', prompt, '--output-format', 'json', '--dangerously-skip-permissions']
     if (sessionId) args.push('--resume', sessionId)
 
+    const comecou = Date.now()
     let finalizado = false
     let motivo = null
     let out = ''
@@ -32,17 +34,28 @@ export function runClaude({
       }
     }
 
+    // Without a time ceiling a stuck run looks exactly like a long one. The
+    // heartbeat is what tells them apart without killing legitimate work: it
+    // keeps reporting elapsed time until the run actually ends.
+    let batida = null
+    const avisar = () => {
+      if (finalizado) return
+      onSlow?.(Date.now() - comecou)
+    }
+
     const encerrar = (resultado) => {
       if (finalizado) return
       finalizado = true
       clearTimeout(timerLento)
+      clearInterval(batida)
       clearTimeout(timerLimite)
       signal?.removeEventListener('abort', aoAbortar)
       resolve(resultado)
     }
 
     const timerLento = setTimeout(() => {
-      if (!finalizado) onSlow?.()
+      avisar()
+      if (heartbeatMs && !finalizado) batida = setInterval(avisar, heartbeatMs)
     }, slowNoticeMs)
 
     // No cap by default: a long job must not be killed for passing a number.

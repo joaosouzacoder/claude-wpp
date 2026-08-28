@@ -141,6 +141,10 @@ async function main() {
     },
   })
 
+  // A run killed with the process never answered. Now that the request survives
+  // in the state file, boot is where that debt gets paid.
+  await handler.recuperar().catch((e) => log.error(e.stack ?? e.message))
+
   const api = createApi({
     host: config.apiHost,
     port: config.apiPort,

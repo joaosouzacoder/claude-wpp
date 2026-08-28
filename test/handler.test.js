@@ -565,3 +565,95 @@ test('/wpp corrige uma sessão pré-existente que aponta para o diretório errad
   assert.equal(sessions.get('wpp').cwd, dir, 'a sessão devia ter sido reapontada para o agentCwd')
   assert.match(ditos.at(-1), new RegExp(dir))
 })
+
+// 28/08: um pedido foi reconhecido com "Trabalhando nisso.", o daemon foi
+// reiniciado no meio, e a resposta nunca chegou. Todo pedido reconhecido
+// precisa de um desfecho — sucesso, erro ou "fui interrompido".
+test('o pedido em voo fica registrado no estado e sai de lá ao terminar', async () => {
+  let vistoDuranteORun = null
+  const { handler, sessions } = montar({
+    run: async () => {
+      vistoDuranteORun = sessions.active().pending?.prompt
+      return { ok: true, text: 'feito', sessionId: 'sid-1', error: null }
+    },
+  })
+  await handler.handle('faz a coisa demorada')
+  assert.equal(vistoDuranteORun, 'faz a coisa demorada')
+  assert.equal(sessions.active().pending, null)
+})
+
+test('o pedido em voo é limpo mesmo quando o run falha', async () => {
+  const { handler, sessions } = montar({
+    run: async () => ({ ok: false, text: '', sessionId: null, error: 'explodiu' }),
+  })
+  await handler.handle('faz a coisa')
+  assert.equal(sessions.active().pending, null)
+})
+
+test('recuperar() avisa sobre o pedido que morreu no restart', async () => {
+  const { handler, sessions, ditos, dir } = montar()
+  sessions.create({ cwd: dir, name: 'api' })
+  sessions.beginRun('api', 'aquele pedido longo')
+
+  await handler.recuperar()
+  const aviso = ditos.join('\n')
+  assert.match(aviso, /interromp/i)
+  assert.match(aviso, /aquele pedido longo/)
+  assert.match(aviso, /\/retomar api/)
+})
+
+test('recuperar() fica calado quando nada morreu no meio', async () => {
+  const { handler, ditos, dir } = montar()
+  await handler.recuperar()
+  assert.deepEqual(ditos, [])
+})
+
+test('/retomar reexecuta o pedido interrompido', async () => {
+  const enviados = []
+  const { handler, sessions, dir } = montar({
+    run: async ({ prompt }) => {
+      enviados.push(prompt)
+      return { ok: true, text: 'agora foi', sessionId: 'sid-1', error: null }
+    },
+  })
+  sessions.create({ cwd: dir, name: 'api' })
+  sessions.beginRun('api', 'aquele pedido longo')
+
+  await handler.handle('/retomar api')
+  assert.deepEqual(enviados, ['aquele pedido longo'])
+  assert.equal(sessions.get('api').pending, null)
+})
+
+test('/retomar sem nada interrompido avisa em vez de inventar', async () => {
+  const { handler, ditos, dir } = montar()
+  await handler.handle('/retomar')
+  assert.match(ditos.at(-1), /nada/i)
+})
+
+test('/descartar joga fora o pedido interrompido', async () => {
+  const enviados = []
+  const { handler, sessions, dir } = montar({
+    run: async ({ prompt }) => { enviados.push(prompt); return { ok: true, text: 'x', sessionId: null, error: null } },
+  })
+  sessions.create({ cwd: dir, name: 'api' })
+  sessions.beginRun('api', 'aquele pedido longo')
+
+  await handler.handle('/descartar api')
+  assert.equal(sessions.get('api').pending, null)
+  assert.deepEqual(enviados, [])
+})
+
+// Sem teto de tempo, o silêncio prolongado é indistinguível de um travamento.
+test('o heartbeat vira aviso de progresso, sem repetir "Trabalhando nisso."', async () => {
+  const { handler, ditos } = montar({
+    run: async ({ onSlow }) => {
+      onSlow(9000)
+      onSlow(310000)
+      return { ok: true, text: 'demorou mas saiu', sessionId: 'sid-1', error: null }
+    },
+  })
+  await handler.handle('tarefa longa')
+  assert.equal(ditos[0], 'Trabalhando nisso.')
+  assert.match(ditos[1], /ainda/i)
+  assert.match(ditos[1], /5min/)
+})

@@ -117,3 +117,34 @@ test('sem teto, o abort continua sendo a forma de interromper', async () => {
   assert.equal(r.ok, false)
   assert.match(r.error, /interrompid/i)
 })
+
+// Sem teto de tempo (69148d1), um run travado é indistinguível de um run longo.
+// O heartbeat é o que torna a diferença observável sem matar trabalho legítimo.
+test('com heartbeatMs, onSlow repete enquanto o run não termina', async () => {
+  process.env.FAKE_MODE = 'slow'
+  delete process.env.FAKE_ARGS_FILE
+  const marcas = []
+  const r = await runClaude({
+    ...base, timeoutMs: null, slowNoticeMs: 40, heartbeatMs: 60, onSlow: (ms) => marcas.push(ms),
+  })
+  assert.equal(r.ok, true)
+  assert.ok(marcas.length >= 3, `esperava vários avisos, vieram ${marcas.length}`)
+  assert.ok(marcas.at(-1) > marcas[0], 'o tempo decorrido tem que crescer a cada aviso')
+})
+
+test('onSlow recebe o tempo decorrido do run', async () => {
+  process.env.FAKE_MODE = 'slow'
+  const marcas = []
+  await runClaude({ ...base, slowNoticeMs: 40, onSlow: (ms) => marcas.push(ms) })
+  assert.equal(marcas.length, 1)
+  assert.ok(marcas[0] >= 40, `esperava >=40ms, veio ${marcas[0]}`)
+})
+
+test('o heartbeat para quando o run termina', async () => {
+  process.env.FAKE_MODE = 'ok'
+  let chamadas = 0
+  await runClaude({ ...base, slowNoticeMs: 10, heartbeatMs: 10, onSlow: () => { chamadas += 1 } })
+  const depoisDoFim = chamadas
+  await new Promise((r) => setTimeout(r, 80))
+  assert.equal(chamadas, depoisDoFim, 'não pode continuar avisando depois de resolver')
+})

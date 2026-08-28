@@ -13,6 +13,8 @@ const AJUDA = [
   '/use <nome> — troca a sessão ativa',
   '/end [nome] — encerra (sem nome, encerra a ativa)',
   '/stop — interrompe o que a sessão ativa está fazendo',
+  '/retomar [nome] — refaz o pedido que morreu num reinício',
+  '/descartar [nome] — esquece o pedido que morreu num reinício',
   '/help — isto aqui',
   '@nome texto — manda pra outra sessão sem trocar a ativa',
   '',
@@ -34,6 +36,13 @@ function numeroDoRascunho(bruto) {
   return digitos ? Number(digitos) : null
 }
 
+function duracao(ms) {
+  const min = Math.round(ms / 60000)
+  if (min < 1) return 'menos de 1min'
+  if (min < 60) return `${min}min`
+  return `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}`
+}
+
 function ociosidade(iso) {
   const ms = Date.now() - new Date(iso).getTime()
   const min = Math.floor(ms / 60000)
@@ -50,6 +59,9 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
   }
 
   async function executar(sessao, prompt) {
+    // On disk before the first token: if this process dies mid-run, the next
+    // boot is the only thing left that can tell you the reply is owed.
+    sessions.beginRun(sessao.name, prompt)
     sessao.busy = true
     sessao.abort = new AbortController()
     let avisou = false
@@ -61,12 +73,15 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
         prompt,
         sessionId: sessao.claudeSessionId,
         slowNoticeMs: config.slowNoticeMs,
+        heartbeatMs: config.heartbeatMs,
         timeoutMs: config.timeoutMs,
         signal: sessao.abort.signal,
-        onSlow: () => {
-          if (avisou) return
+        onSlow: (decorrido) => {
+          const texto = avisou
+            ? `Ainda trabalhando nisso (${duracao(decorrido)}).`
+            : 'Trabalhando nisso.'
           avisou = true
-          reply('Trabalhando nisso.').catch(() => {})
+          reply(texto).catch(() => {})
         },
       })
 
@@ -77,18 +92,35 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
     } finally {
       sessao.busy = false
       sessao.abort = null
+      sessions.endRun(sessao.name)
     }
 
-    const proxima = sessao.queue.shift()
+    const proxima = sessions.dequeue(sessao.name)
     if (proxima != null) await executar(sessao, proxima)
   }
 
   async function despachar(sessao, prompt) {
     if (sessao.busy) {
-      sessao.queue.push(prompt)
+      sessions.enqueue(sessao.name, prompt)
       return
     }
     await executar(sessao, prompt)
+  }
+
+  // Every acknowledged request owes a terminal answer. A run killed with the
+  // process never produced one, so the next boot delivers it.
+  async function recuperar() {
+    for (const s of sessions.interrompidas()) {
+      const { prompt, startedAt } = s.pending
+      const quando = ociosidade(startedAt)
+      await reply([
+        `[${s.name}] Este pedido foi interrompido por um reinício ${quando === 'agora' ? 'agora há pouco' : `há ${quando}`} e nunca terminou:`,
+        '',
+        `"${prompt}"`,
+        '',
+        `Manda /retomar ${s.name} pra eu refazer, ou /descartar ${s.name} pra esquecer.`,
+      ].join('\n'))
+    }
   }
 
   const comandos = {
@@ -132,9 +164,31 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
     async stop() {
       const s = sessions.active()
       if (!s?.busy) return reply('Não tem nada rodando agora.')
-      s.queue.length = 0
+      sessions.clearQueue(s.name)
       s.abort?.abort()
       return reply(`Interrompendo [${s.name}].`)
+    },
+
+    async retomar(args) {
+      const alvo = args[0]
+      const s = alvo ? sessions.get(alvo) : sessions.interrompidas()[0]
+      if (alvo && !s) return reply(`Não achei a sessão ${alvo}.`)
+      if (!s?.pending) return reply('Não tem nada interrompido para retomar.')
+
+      const { prompt } = s.pending
+      sessions.endRun(s.name)
+      await reply(`Retomando [${s.name}].`)
+      return despachar(s, prompt)
+    },
+
+    async descartar(args) {
+      const alvo = args[0]
+      const s = alvo ? sessions.get(alvo) : sessions.interrompidas()[0]
+      if (alvo && !s) return reply(`Não achei a sessão ${alvo}.`)
+      if (!s?.pending) return reply('Não tem nada interrompido para descartar.')
+
+      sessions.endRun(s.name)
+      return reply(`Esqueci o pedido interrompido de [${s.name}].`)
     },
 
     async help() {
@@ -267,5 +321,5 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
     return despachar(sessao, prompt)
   }
 
-  return { handle }
+  return { handle, recuperar }
 }

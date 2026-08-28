@@ -10,6 +10,7 @@ const DEFAULTS = {
   claudeBin: 'claude',
   defaultCwd: homedir(),
   slowNoticeMs: 8000,
+  heartbeatMs: 300000,
   timeoutMs: null,
   maxMessageChars: 3500,
   openaiApiKey: null,

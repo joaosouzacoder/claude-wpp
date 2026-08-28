@@ -87,18 +87,19 @@ test('encerrar a última sessão deixa a ativa nula', () => {
   assert.deepEqual(sessions.list(), [])
 })
 
-test('estado sobrevive a um restart, sem campos de runtime', () => {
+// `busy` e `abort` descrevem o processo vivo e não fazem sentido em disco.
+// `queue` e `pending` são pedidos seus: perdê-los é perder trabalho em silêncio.
+test('estado sobrevive a um restart, sem campos de processo', () => {
   const { store, sessions, dir } = novo()
   const s = sessions.create({ cwd: dir, name: 'api' })
   s.claudeSessionId = 'uuid-123'
   s.busy = true
-  s.queue.push('nao devia persistir')
   sessions.touch('api')
 
   const bruto = store.load()
   assert.equal(bruto.sessions[0].claudeSessionId, 'uuid-123')
   assert.equal(bruto.sessions[0].busy, undefined)
-  assert.equal(bruto.sessions[0].queue, undefined)
+  assert.equal(bruto.sessions[0].abort, undefined)
 
   const revividas = createSessions({ store, defaultCwd: dir })
   const r = revividas.get('api')
@@ -106,4 +107,55 @@ test('estado sobrevive a um restart, sem campos de runtime', () => {
   assert.equal(r.busy, false)
   assert.deepEqual(r.queue, [])
   assert.equal(revividas.active().name, 'api')
+})
+
+// O pedido em voo só existia em memória: um restart do daemon (deploy, crash,
+// reboot) matava o run e ninguém nunca era avisado. O estado é o que garante
+// que todo pedido reconhecido tenha um desfecho.
+test('o prompt em voo sobrevive à morte do processo', () => {
+  const { store, sessions, dir } = novo()
+  sessions.create({ cwd: dir, name: 'api' })
+  sessions.beginRun('api', 'faz a coisa demorada')
+
+  const revividas = createSessions({ store, defaultCwd: dir })
+  assert.equal(revividas.get('api').pending.prompt, 'faz a coisa demorada')
+  assert.ok(revividas.get('api').pending.startedAt)
+})
+
+test('terminar o run limpa o pending persistido', () => {
+  const { store, sessions, dir } = novo()
+  sessions.create({ cwd: dir, name: 'api' })
+  sessions.beginRun('api', 'faz a coisa')
+  sessions.endRun('api')
+
+  assert.equal(createSessions({ store, defaultCwd: dir }).get('api').pending, null)
+})
+
+test('a fila de pedidos também sobrevive ao restart', () => {
+  const { store, sessions, dir } = novo()
+  sessions.create({ cwd: dir, name: 'api' })
+  sessions.enqueue('api', 'segundo pedido')
+
+  const revividas = createSessions({ store, defaultCwd: dir })
+  assert.deepEqual(revividas.get('api').queue, ['segundo pedido'])
+  assert.equal(revividas.dequeue('api'), 'segundo pedido')
+  assert.deepEqual(createSessions({ store, defaultCwd: dir }).get('api').queue, [])
+})
+
+// Revivida ela não está rodando nada: o processo que rodava morreu.
+test('sessão revivida com pending não fica marcada como busy', () => {
+  const { store, sessions, dir } = novo()
+  sessions.create({ cwd: dir, name: 'api' })
+  sessions.beginRun('api', 'faz a coisa')
+  assert.equal(createSessions({ store, defaultCwd: dir }).get('api').busy, false)
+})
+
+test('interrompidas() lista só o que morreu no meio', () => {
+  const { store, sessions, dir } = novo()
+  sessions.create({ cwd: dir, name: 'api' })
+  sessions.create({ cwd: dir, name: 'web' })
+  sessions.beginRun('api', 'faz a coisa')
+
+  const revividas = createSessions({ store, defaultCwd: dir })
+  assert.deepEqual(revividas.interrompidas().map((s) => s.name), ['api'])
 })

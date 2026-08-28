@@ -33,6 +33,8 @@ systemctl --user start claude-wpp
 | `/use <name>` | switches the active session |
 | `/end [name]` | ends the session |
 | `/stop` | interrupts whatever the active session is doing |
+| `/retomar [name]` | redoes the request a restart killed mid-run |
+| `/descartar [name]` | forgets the request a restart killed mid-run |
 | `/help` | lists the commands |
 | `/wpp <request>` | reads your own WhatsApp and prepares a message (see below) |
 | `/ok <n>` | approves draft `n` — the only way anything gets sent |
@@ -69,14 +71,24 @@ video is read, as before.
 | `transcribeModel` | `gpt-4o-transcribe` | transcription model |
 | `transcribeTimeoutMs` | `120000` | gives up on a transcription after this |
 | `mediaDir` | `<stateDir>/media` | where received media is written |
+| `heartbeatMs` | `300000` | how often a running job repeats that it is alive |
 
 When something takes longer than 8 seconds, the bot replies `Trabalhando nisso.`
-once and sends the result afterwards.
+and then repeats `Ainda trabalhando nisso (12min).` every `heartbeatMs` until
+the result arrives, so a long job and a stuck one stop looking alike.
 
 There is no time ceiling: a job that needs an hour gets an hour. The cost is
 that a stuck run holds its session until you send `/stop`, so nothing queued
 behind it moves. Set `timeoutMs` in milliseconds if you would rather have a cap. Every reply is prefixed with
 `[session-name]`, because with parallel sessions they arrive out of order.
+
+### A restart no longer eats your request
+
+The prompt being run and the ones queued behind it are written to the state
+file, not just held in memory. If the daemon dies mid-run — a deploy, a crash,
+a reboot — the next boot tells you which request never finished and offers
+`/retomar` to redo it or `/descartar` to forget it. Nothing is re-run on its
+own, because the dead run may already have had side effects.
 
 Example:
 

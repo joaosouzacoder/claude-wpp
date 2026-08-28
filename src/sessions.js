@@ -18,7 +18,10 @@ function expandir(cwd, defaultCwd) {
   return absoluto
 }
 
-const PERSISTIDO = ['name', 'cwd', 'claudeSessionId', 'createdAt', 'lastActivityAt']
+// `busy` and `abort` describe the live process and mean nothing on disk.
+// `pending` and `queue` are requests you made: dropping them loses work in
+// silence, which is the one thing this daemon must never do.
+const PERSISTIDO = ['name', 'cwd', 'claudeSessionId', 'createdAt', 'lastActivityAt', 'pending', 'queue']
 
 export function createSessions({ store, defaultCwd = homedir(), now = () => new Date().toISOString() }) {
   const salvo = store.load()
@@ -29,8 +32,11 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
     claudeSessionId: s.claudeSessionId ?? null,
     createdAt: s.createdAt ?? now(),
     lastActivityAt: s.lastActivityAt ?? now(),
+    // A revived session is running nothing: the process that ran it is dead.
+    // `pending` surviving means the reply is owed, not that work is happening.
+    pending: s.pending ?? null,
+    queue: Array.isArray(s.queue) ? s.queue : [],
     busy: false,
-    queue: [],
     abort: null,
   }))
 
@@ -68,8 +74,9 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
         claudeSessionId: null,
         createdAt: now(),
         lastActivityAt: now(),
-        busy: false,
+        pending: null,
         queue: [],
+        busy: false,
         abort: null,
       }
       sessions.push(sessao)
@@ -94,6 +101,44 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
       persist()
       return true
     },
+
+    beginRun(name, prompt) {
+      const s = api.get(name)
+      if (!s) return
+      s.pending = { prompt, startedAt: now() }
+      persist()
+    },
+
+    endRun(name) {
+      const s = api.get(name)
+      if (!s) return
+      s.pending = null
+      persist()
+    },
+
+    enqueue(name, prompt) {
+      const s = api.get(name)
+      if (!s) return
+      s.queue.push(prompt)
+      persist()
+    },
+
+    dequeue(name) {
+      const s = api.get(name)
+      if (!s) return null
+      const prompt = s.queue.shift() ?? null
+      persist()
+      return prompt
+    },
+
+    clearQueue(name) {
+      const s = api.get(name)
+      if (!s) return
+      s.queue.length = 0
+      persist()
+    },
+
+    interrompidas: () => sessions.filter((s) => s.pending && !s.busy),
 
     touch(name) {
       const s = api.get(name)
