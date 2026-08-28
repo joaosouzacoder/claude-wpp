@@ -25,7 +25,12 @@ const DEFAULTS = {
 const ENV_MAP = {
   CLAUDE_WPP_API_HOST: ['apiHost', String],
   CLAUDE_WPP_API_PORT: ['apiPort', Number],
+  // Keeping the token out of config.json means it can live wherever the secrets
+  // already live, and the file on disk stops being worth protecting on its own.
+  // Both names read the same field: the short one is what a shared secrets file
+  // tends to be keyed by, and it is applied last so it wins a disagreement.
   CLAUDE_WPP_API_TOKEN: ['apiToken', String],
+  WPP_TOKEN: ['apiToken', String],
   CLAUDE_WPP_STATE_DIR: ['stateDir', String],
   CLAUDE_WPP_CLAUDE_BIN: ['claudeBin', String],
   CLAUDE_WPP_DEFAULT_CWD: ['defaultCwd', String],

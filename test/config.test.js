@@ -99,3 +99,16 @@ test('a chave da OpenAI pode vir do arquivo ou do ambiente', () => {
 test('a chave da OpenAI não é obrigatória: sem ela o serviço ainda sobe', () => {
   assert.doesNotThrow(() => loadConfig({ path: fixture(MINIMO), env: {} }))
 })
+
+// Tirar o token do config.json é o que permite guardá-lo junto dos outros
+// segredos da máquina; o arquivo no disco deixa de valer alguma coisa sozinho.
+test('WPP_TOKEN do ambiente serve de token, sem nada no arquivo', () => {
+  const { apiToken, ...semToken } = MINIMO
+  const cfg = loadConfig({ path: fixture(semToken), env: { WPP_TOKEN: 'do-tokens' } })
+  assert.equal(cfg.apiToken, 'do-tokens')
+})
+
+test('sem token no arquivo e sem token no ambiente, falha em vez de subir aberto', () => {
+  const { apiToken, ...semToken } = MINIMO
+  assert.throws(() => loadConfig({ path: fixture(semToken), env: {} }), /apiToken/)
+})

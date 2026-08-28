@@ -244,10 +244,17 @@ where the draft waits for your `/ok` regardless.
 for `/ok` on WhatsApp. It is how `agent/propose.mjs` works, and the only write
 path Claude is given.
 
+The token does not have to sit in `config.json`. `WPP_TOKEN` or
+`CLAUDE_WPP_API_TOKEN` in the environment takes precedence over the file, so it
+can live wherever the machine already keeps its secrets — the unit reads
+`~/.tokens` if that file exists. Whichever way it arrives, it is required: the
+daemon refuses to start without one rather than serving an open API.
+
 | Key | Default | What it does |
 |---|---|---|
 | `apiHost` | `127.0.0.1` | address the API binds to |
 | `apiPort` | `8787` | port the API binds to |
+| `apiToken` | — | required; `WPP_TOKEN` in the environment overrides it |
 
 ## Operation
 

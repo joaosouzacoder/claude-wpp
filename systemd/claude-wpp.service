@@ -9,6 +9,10 @@ WorkingDirectory=%h/claude-wpp
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=HOME=%h
 Environment=NODE_ENV=production
+# Optional, and the reason config.json does not have to hold the token: a
+# KEY=value file of secrets, read here so `WPP_TOKEN` reaches the daemon. The
+# leading dash keeps the unit working on a host that has no such file.
+EnvironmentFile=-%h/.tokens
 ExecStart=%h/.asdf/installs/nodejs/24.15.0/bin/node %h/claude-wpp/src/index.js
 Restart=always
 RestartSec=5
