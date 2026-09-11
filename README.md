@@ -104,6 +104,43 @@ list the failing tests
 > [infra] /dev/sda1 at 81%
 ```
 
+## Sessions in agent-deck (optional)
+
+If [agent-deck](https://github.com/asheshgoplani/agent-deck) answers on boot,
+the bot stops keeping sessions of its own and talks to the deck's instead: the
+conversation you have on WhatsApp is the same one you see in the tmux pane, and
+conductors and their children are reachable by title. Without agent-deck the
+bot behaves exactly as described above. The log line on boot says which mode is
+running.
+
+| | agent-deck mode |
+|---|---|
+| `/ls` | every session in the deck, with its status, children under their conductor |
+| `@title text` | sends to that deck session; a busy conductor gets it after its current turn |
+| bare text | goes to the active session, or to a `home` session in the deck |
+| `/new [dir] [name]` | creates a root session in the deck, in the `whatsapp` group |
+| `/end [name]` | **stops** the session; it stays in the deck, and messaging it starts it again |
+| `/stop` | interrupts the turn in the pane (Escape), not just the wait |
+
+The bot also writes on its own when something happens in the deck that you did
+not ask for over WhatsApp:
+
+- `✅ [daily-sync] terminou: …` — a session printed agent-deck's completion line;
+- `⏸️ [conductor-dw] parou e está esperando você: …` — a session ended a turn
+  with a new reply;
+- `⚠️ [x] entrou em erro.`
+
+Replies you already got through a conversation are not repeated, and a restart
+does not replay what was already there. What counts as worth a message lives in
+`src/notifyRules.js`; return `null` there for anything that turns out to be
+noise.
+
+Each mode has its own state file (`state.json`, `deck-state.json`), so removing
+agent-deck brings the old headless sessions back as they were. A folder Claude
+has never opened asks, once, whether to trust it; for sessions the bot itself
+starts it answers yes, since headless `claude -p` never asked either. The
+conditional-schedule check (`/wpp`) always runs headless, whichever mode is on.
+
 ## Your own WhatsApp
 
 The bot has its own number. Optionally, a **second account — yours** — can be

@@ -12,6 +12,9 @@ import { createCapture } from './capture.js'
 import { createOutbox } from './outbox.js'
 import { createScheduler } from './scheduler.js'
 import { createWpp, formatDraft } from './wpp.js'
+import { createDeck } from './deck.js'
+import { createDeckSessions } from './deckSessions.js'
+import { createNotifier } from './notifier.js'
 
 const log = {
   info: (m) => console.log(`[info] ${m}`),
@@ -77,10 +80,31 @@ function montarContaPessoal(config, avisar) {
   return { db, me, outbox, wpp, scheduler }
 }
 
+// agent-deck is optional. Present, it owns the sessions and the bot talks to
+// them; absent, the bot is exactly what it was. Each mode keeps its own state
+// file, so uninstalling the deck brings back the old sessions untouched.
+async function montarSessoes(config) {
+  const deck = createDeck({ bin: config.agentDeckBin })
+  if (await deck.detect().catch(() => false)) {
+    const sessions = createDeckSessions({
+      deck,
+      store: createStore(join(config.stateDir, 'deck-state.json')),
+      defaultCwd: config.defaultCwd,
+    })
+    // A deck that is installed but not answering right now is not a reason to
+    // keep the bot down; every message refreshes the list again.
+    await sessions.refresh().catch((e) => log.warn(`agent-deck não listou as sessões no boot: ${e.message}`))
+    log.info(`sessões no agent-deck (${config.agentDeckBin}).`)
+    return { sessions, run: deck.run, deck }
+  }
+  log.info('agent-deck não encontrado; sessões headless como antes.')
+  const sessions = createSessions({ store: createStore(join(config.stateDir, 'state.json')), defaultCwd: config.defaultCwd })
+  return { sessions, run: runClaude, deck: null }
+}
+
 async function main() {
   const config = loadConfig()
-  const store = createStore(join(config.stateDir, 'state.json'))
-  const sessions = createSessions({ store, defaultCwd: config.defaultCwd })
+  const { sessions, run, deck } = await montarSessoes(config)
 
   // The adapter delivers to the handler and the handler replies through the
   // adapter, so one of them has to exist first. The bot now connects before the
@@ -128,7 +152,7 @@ async function main() {
 
   handler = createHandler({
     sessions,
-    run: runClaude,
+    run,
     transcribe,
     reply: avisar,
     config,
@@ -144,6 +168,12 @@ async function main() {
   // A run killed with the process never answered. Now that the request survives
   // in the state file, boot is where that debt gets paid.
   await handler.recuperar().catch((e) => log.error(e.stack ?? e.message))
+
+  // Only with the deck, and never allowed to take the bot down with it.
+  const notifier = deck
+    ? createNotifier({ deck, sessions, notify: avisar, intervalMs: config.notifyIntervalMs, log })
+    : null
+  notifier?.start()
 
   const api = createApi({
     host: config.apiHost,
@@ -166,6 +196,7 @@ async function main() {
   for (const sinal of ['SIGINT', 'SIGTERM']) {
     process.on(sinal, async () => {
       log.info(`recebi ${sinal}, encerrando`)
+      notifier?.stop()
       pessoal?.scheduler.stop()
       pessoal?.db.close()
       await api.close().catch(() => {})

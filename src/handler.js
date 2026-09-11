@@ -69,6 +69,7 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
     try {
       const r = await run({
         bin: config.claudeBin,
+        name: sessao.name,
         cwd: sessao.cwd,
         prompt,
         sessionId: sessao.claudeSessionId,
@@ -113,6 +114,18 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
     for (const s of sessions.interrompidas()) {
       const { prompt, startedAt } = s.pending
       const quando = ociosidade(startedAt)
+
+      // In the deck the session outlives this process: the work may well have
+      // finished while nobody was listening. Hand that over instead of asking
+      // you to repeat a request that was already answered. It is "the latest
+      // reply", not "your reply" — a conductor may have answered something else.
+      const ultima = await sessions.lastReply?.(s.name).catch(() => null)
+      if (ultima?.timestamp && Date.parse(ultima.timestamp) > Date.parse(startedAt)) {
+        sessions.endRun(s.name)
+        await responder(s.name, `(chegou enquanto eu reiniciava — é a última resposta da sessão)\n\n${ultima.content}`)
+        continue
+      }
+
       await reply([
         `[${s.name}] Este pedido foi interrompido por um reinício ${quando === 'agora' ? 'agora há pouco' : `há ${quando}`} e nunca terminou:`,
         '',
@@ -127,7 +140,7 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
     async new(args) {
       const [dir, nome] = args
       try {
-        const s = sessions.create({ cwd: dir, name: nome })
+        const s = await sessions.create({ cwd: dir, name: nome })
         await reply(`Sessão [${s.name}] criada em ${s.cwd}`)
       } catch (err) {
         await reply(`Não deu: ${err.message}`)
@@ -140,8 +153,14 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
       const ativa = sessions.active()?.name
       const linhas = lista.map((s) => {
         const marca = s.name === ativa ? '*' : ' '
-        const estado = s.busy ? 'ocupada' : `ociosa ${ociosidade(s.lastActivityAt)}`
-        return `${marca} ${s.name}  ${s.cwd}  (${estado})`
+        // `status` only exists in the deck, where "idle for 3min" alone would
+        // hide that a session is stopped or in error.
+        const estado = s.busy
+          ? 'ocupada'
+          : [s.status, `ociosa ${ociosidade(s.lastActivityAt)}`].filter(Boolean).join(' · ')
+        const ramo = s.parentId ? '└ ' : ''
+        const soPeloDeck = s.addressable === false ? '  [só pelo deck]' : ''
+        return `${marca} ${ramo}${s.name}  ${s.cwd}  (${estado})${soPeloDeck}`
       })
       return reply(linhas.join('\n'))
     },
@@ -156,9 +175,16 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
     async end(args) {
       const nome = args[0] ?? sessions.active()?.name
       if (!nome) return reply('Não há sessão para encerrar.')
-      if (!sessions.end(nome)) return reply(`Não achei a sessão ${nome}.`)
+      try {
+        if (!(await sessions.end(nome))) return reply(`Não achei a sessão ${nome}.`)
+      } catch (err) {
+        return reply(`Não deu: ${err.message}`)
+      }
       const ativa = sessions.active()?.name
-      return reply(`Sessão [${nome}] encerrada.${ativa ? ` Ativa agora: [${ativa}].` : ''}`)
+      const feito = sessions.kind === 'deck'
+        ? `Sessão [${nome}] parada. Ela continua no agent-deck; mande uma mensagem para ela e eu religo.`
+        : `Sessão [${nome}] encerrada.`
+      return reply(`${feito}${ativa ? ` Ativa agora: [${ativa}].` : ''}`)
     },
 
     async stop() {
@@ -206,11 +232,21 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
       // else entirely. Pointing anywhere but agentCwd means Claude never reads
       // the instructions that give it its tools and its one rule.
       let sessao = sessions.get(SESSAO_WPP)
+      if (sessao?.id === null) sessao = null
       if (sessao && sessao.cwd !== wpp.agentCwd) {
+        // A deck session named `wpp` somewhere else is not this bot's to recycle:
+        // it may be yours. Say so instead of stopping it.
+        if (sessions.kind === 'deck') {
+          return reply(`Já existe uma sessão [${SESSAO_WPP}] no agent-deck em ${sessao.cwd}. Não mexo nela: renomeie ou apague pelo deck e mande /wpp de novo.`)
+        }
         sessions.end(SESSAO_WPP)
         sessao = null
       }
-      sessao ??= sessions.create({ cwd: wpp.agentCwd, name: SESSAO_WPP, activate: false })
+      try {
+        sessao ??= await sessions.create({ cwd: wpp.agentCwd, name: SESSAO_WPP, activate: false })
+      } catch (err) {
+        return reply(`Não deu: ${err.message}`)
+      }
       return despachar(sessao, pedido)
     },
 
@@ -299,6 +335,10 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
       texto = r.text
     }
 
+    // In the deck, sessions come and go without telling this process. A stale
+    // list still routes; the send itself says so if the deck is really down.
+    await sessions.refresh?.().catch(() => {})
+
     const cmd = parse(texto)
 
     if (cmd.type === 'error') return reply(cmd.message)
@@ -312,9 +352,13 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
     let sessao
     if (cmd.target) {
       sessao = sessions.get(cmd.target)
-      if (!sessao) return reply(`Não achei a sessão ${cmd.target}. Manda /ls.`)
+      if (!sessao || sessao.id === null) return reply(`Não achei a sessão ${cmd.target}. Manda /ls.`)
     } else {
-      sessao = sessions.active() ?? sessions.create({ cwd: config.defaultCwd })
+      try {
+        sessao = sessions.active() ?? await sessions.create({ cwd: config.defaultCwd })
+      } catch (err) {
+        return reply(`Não deu: ${err.message}`)
+      }
     }
 
     const prompt = media?.kind === 'image' ? promptComImagem(cmd.text, media.path) : cmd.text

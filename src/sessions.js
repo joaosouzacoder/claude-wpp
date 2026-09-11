@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 
 const NOME_VALIDO = /^[a-z0-9_-]{1,24}$/i
 
-function expandir(cwd, defaultCwd) {
+export function expandir(cwd, defaultCwd) {
   const bruto = cwd?.trim() ? cwd.trim() : defaultCwd
   const expandido = bruto === '~' ? homedir() : bruto.replace(/^~\//, `${homedir()}/`)
   const absoluto = resolve(defaultCwd, expandido)
