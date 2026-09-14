@@ -13,6 +13,16 @@ const CONFIANCA = /Yes, I trust this folder/
 const PRONTO = /shift\+tab to cycle|\? for shortcuts|bypass permissions/
 const JANELA_CONFIANCA_MS = 15000
 
+// Claude's tool-approval dialog. agent-deck reports a session sitting on it as
+// `waiting`, the same status as a finished turn, so `send --wait` returns
+// before the turn is over and `--defer-if-busy` types the message into the
+// dialog, where its Enter picks "Yes" and the text itself is lost.
+const PERMISSAO = /Do you want to proceed\?|requires confirmation for this command/
+const INTERVALO_TURNO_MS = 2000
+// A turn resumed by an approval or by a Stop hook can sit in `waiting` for a
+// moment before it shows `running` again. One quiet look is not "it is over".
+const OLHADAS_QUIETAS = 3
+
 const CONFLITO = /stale concurrent|concurrent .*conflict/i
 const TENTATIVAS = 4
 
@@ -217,7 +227,41 @@ export function createDeck({ bin = 'agent-deck', tmuxBin = 'tmux', runCli = exec
     if (pane) await tmux(['send-keys', '-t', pane, 'Escape'])
   }
 
-  async function run({ name, prompt, signal, onSlow, slowNoticeMs = 8000, heartbeatMs = null } = {}) {
+  // The status alone cannot tell a finished turn from one waiting for approval;
+  // the pane can.
+  async function situacao(name) {
+    const estado = await show(name).catch(() => null)
+    const pane = estado?.tmux_session
+    const tela = pane ? (await tmux(['capture-pane', '-p', '-t', pane])).stdout : ''
+    return { status: estado?.status ?? null, permissao: PERMISSAO.test(tela ?? '') }
+  }
+
+  // Polls until the turn is really over: nothing running, no dialog open, and
+  // either a reply newer than the request or several quiet looks in a row.
+  // No ceiling, same policy as the send itself; /stop is what ends it early.
+  async function aguardarFimDoTurno(name, desde, signal, onNotice) {
+    let avisouPermissao = false
+    let quietas = 0
+    for (;;) {
+      if (signal?.aborted) return { abortado: true }
+      const s = await situacao(name)
+      if (s.permissao && !avisouPermissao) {
+        avisouPermissao = true
+        onNotice?.('parou num pedido de permissão no agent-deck. Sua mensagem já chegou; responda o pedido lá e eu trago a resposta.')
+      }
+      if (s.status === 'running' || s.permissao) {
+        quietas = 0
+      } else {
+        const resposta = await lastReply(name)
+        if (resposta && !(resposta.timestamp && Date.parse(resposta.timestamp) < desde)) return { resposta }
+        quietas += 1
+        if (quietas >= OLHADAS_QUIETAS) return { resposta }
+      }
+      await sleep(INTERVALO_TURNO_MS)
+    }
+  }
+
+  async function run({ name, prompt, signal, onSlow, onNotice, slowNoticeMs = 8000, heartbeatMs = null } = {}) {
     // /end stops a session without deleting it. Talking to it again is the
     // obvious way to say "bring it back", so do that instead of failing.
     const estado = await show(name).catch(() => null)
@@ -238,7 +282,30 @@ export function createDeck({ bin = 'agent-deck', tmuxBin = 'tmux', runCli = exec
       if (heartbeatMs && !finalizado) batida = setInterval(avisar, heartbeatMs)
     }, slowNoticeMs)
 
+    const recusarPermissao = () => ({
+      ok: false,
+      text: '',
+      sessionId: null,
+      error: `${name} está parada num pedido de permissão no agent-deck. Não enviei sua mensagem: o Enter dela aprovaria o pedido. Responda lá e mande de novo.`,
+    })
+
     try {
+      // Wait for a busy turn here, not only through `--defer-if-busy`: the deck
+      // takes an open approval dialog for idle and would type the message into
+      // it. The flag stays for a turn that starts between this look and the send.
+      let s = await situacao(name)
+      if (s.status === 'running' && !s.permissao) {
+        onNotice?.('está no meio de outro turno; entrego sua mensagem quando o turno atual terminar.')
+        while (s.status === 'running' && !s.permissao) {
+          // Nothing of ours is running there yet, so there is nothing to Escape.
+          if (signal?.aborted) return { ok: false, text: '', sessionId: null, error: 'Interrompido.' }
+          await sleep(INTERVALO_TURNO_MS)
+          s = await situacao(name)
+        }
+      }
+      if (s.permissao) return recusarPermissao()
+
+      const enviadoEm = now()
       const r = await cli(
         ['session', 'send', name, '--message-file', '-', '--wait', '--json', '--defer-if-busy', '--timeout', SEND_TIMEOUT],
         { stdin: prompt, timeoutMs: null, signal },
@@ -255,11 +322,21 @@ export function createDeck({ bin = 'agent-deck', tmuxBin = 'tmux', runCli = exec
         return { ok: false, text: '', sessionId: null, error: `não entreguei para ${name}: ${motivo}` }
       }
 
-      const resposta = await lastReply(name)
+      let resposta = await lastReply(name)
+      // Older than the request: `--wait` came back before the turn ended (an
+      // approval dialog, a Stop hook resuming it). Wait for the real end.
+      if (resposta?.timestamp && Date.parse(resposta.timestamp) < enviadoEm) {
+        const fim = await aguardarFimDoTurno(name, enviadoEm, signal, onNotice)
+        if (fim.abortado) {
+          await interrupt(name).catch(() => {})
+          return { ok: false, text: '', sessionId: null, error: 'Interrompido.' }
+        }
+        resposta = fim.resposta
+      }
       if (!resposta) return { ok: false, text: '', sessionId: null, error: `${name} respondeu, mas não consegui ler a resposta` }
-      // Older than the request means the turn ended without writing anything
+      // Still older than the request: the turn ended without writing anything
       // new. Handing back the previous answer would read as a reply it is not.
-      if (resposta.timestamp && Date.parse(resposta.timestamp) < comecou) {
+      if (resposta.timestamp && Date.parse(resposta.timestamp) < enviadoEm) {
         return { ok: false, text: '', sessionId: null, error: `${name} recebeu, mas terminou sem responder em texto` }
       }
 

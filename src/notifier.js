@@ -1,4 +1,5 @@
 import { formatNotification } from './notifyRules.js'
+import { chunkText } from './text.js'
 
 // The line agent-deck asks a finished worker to print. Its presence in the last
 // reply is the one unambiguous "I am done" a session gives.
@@ -8,28 +9,38 @@ const SENTINELA = /^===AGENTDECK_DONE===\s+status=(ok|fail)\s+summary=(.*)$/m
 const STATUS = /^\s*\[STATUS\]/
 const NEED = /^\s*NEED:\s*(.+)$/gim
 
-// A heartbeat reply is a status report, not a question: reduce it to its NEED
-// lines. Those tend to repeat unchanged for hours, so an unchanged set is not
-// news either — only a different one is.
-function classificar(conteudo, antes) {
-  const casou = conteudo.match(SENTINELA)
-  if (casou) return { kind: 'done', doneStatus: casou[1], summary: casou[2].trim() }
-  if (!STATUS.test(conteudo)) return { kind: 'waiting', content: conteudo }
+// Matter the conductor has for you that names no session it watches.
+const SEM_SESSAO = '*'
 
-  const needs = [...conteudo.matchAll(NEED)].map((m) => m[1].trim())
-  const chave = needs.join('\n')
-  if (chave === antes.needs) return null
-  antes.needs = chave
-  return { kind: 'status', needs }
+function escapar(texto) {
+  return texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+// A heartbeat restates what is still pending in new words every time, so the
+// text is no identity. What stays put is who it is about: the sessions a NEED
+// line names, and how far each of them has gone. A named session that has not
+// moved since you were told is the same wait; one that ran or got input since
+// is a new matter. A line naming no session is one pending item until the
+// heartbeats stop listing it or you talk to the conductor.
+function pendencias(needs, lista, conductorTitle) {
+  const filhos = lista.filter((s) => s.title !== conductorTitle)
+  return needs.map((linha) => {
+    const citadas = filhos.filter((s) => new RegExp(`(?<![\\w-])${escapar(s.title)}(?![\\w-])`, 'i').test(linha))
+    const chaves = citadas.length ? citadas.map((s) => `${s.title}@${s.lastActivityAt ?? ''}`) : [SEM_SESSAO]
+    return { linha, chaves }
+  })
 }
 
 // Watches the deck and tells you when a session produced something you did not
 // ask for through WhatsApp. The trigger is a new final reply, not a status flip:
 // a quick turn can start and end between two polls, and `running` also covers a
 // background shell that outlived its turn.
-export function createNotifier({ deck, sessions, notify, rules = formatNotification, intervalMs = 5000, log }) {
+export function createNotifier({ deck, sessions, notify, maxChars, memoria, rules = formatNotification, intervalMs = 5000, log }) {
   // id -> { status, lastActivityAt, replyTs }
   let visto = null
+  // conductor title -> pending-item keys you were already told about. On disk:
+  // the first heartbeat after a restart would otherwise be news all over again.
+  const avisadas = new Map(Object.entries(memoria?.load() ?? {}).map(([k, v]) => [k, new Set(v)]))
   let timer = null
   let parado = true
   let falhando = false
@@ -54,9 +65,34 @@ export function createNotifier({ deck, sessions, notify, rules = formatNotificat
     }
   }
 
+  function lembrar(conductorTitle, chaves) {
+    const antes = avisadas.get(conductorTitle)
+    const iguais = antes ? antes.size === chaves.size && [...chaves].every((k) => antes.has(k)) : chaves.size === 0
+    if (iguais) return
+    if (chaves.size) avisadas.set(conductorTitle, chaves)
+    else avisadas.delete(conductorTitle)
+    memoria?.save(Object.fromEntries([...avisadas].map(([k, v]) => [k, [...v]])))
+  }
+
+  // Tells only the lines carrying something you have not been told yet.
+  // What is listed now replaces what was listed before, so an item that
+  // dropped off the heartbeat and comes back later is news again.
+  function classificar(conteudo, s, lista) {
+    const casou = conteudo.match(SENTINELA)
+    if (casou) return { kind: 'done', doneStatus: casou[1], summary: casou[2].trim() }
+    if (!STATUS.test(conteudo)) return { kind: 'waiting', content: conteudo }
+
+    const itens = pendencias([...conteudo.matchAll(NEED)].map((m) => m[1].trim()), lista, s.title)
+    const jaAvisadas = avisadas.get(s.title) ?? new Set()
+    const novas = itens.filter((i) => i.chaves.some((k) => !jaAvisadas.has(k)))
+    lembrar(s.title, new Set(itens.flatMap((i) => i.chaves)))
+    return novas.length ? { kind: 'status', needs: novas.map((i) => i.linha) } : null
+  }
+
   async function enviar(ev) {
     const texto = rules(ev)
-    if (texto) await notify(texto)
+    if (!texto) return
+    for (const pedaco of chunkText(texto, maxChars)) await notify(pedaco)
   }
 
   async function tick() {
@@ -88,7 +124,11 @@ export function createNotifier({ deck, sessions, notify, rules = formatNotificat
       }
 
       // A conversation from WhatsApp owns this turn; its reply is on the way.
-      if (sessions.get(s.title)?.busy) continue
+      // Talking to a conductor also answers what it had pending for you.
+      if (sessions.get(s.title)?.busy) {
+        lembrar(s.title, new Set())
+        continue
+      }
 
       if (s.status === 'error' && antes.status !== 'error') {
         await enviar(evento(s, lista, { kind: 'error' }))
@@ -99,7 +139,7 @@ export function createNotifier({ deck, sessions, notify, rules = formatNotificat
         const r = await deck.lastReply(s.title).catch(() => null)
         const ts = r?.timestamp ?? null
         const novo = ts && ts !== antes.replyTs && ts !== deck.delivered.get(s.title)
-        const ev = novo ? classificar(r.content, antes) : null
+        const ev = novo ? classificar(r.content, s, lista) : null
         if (ev) await enviar(evento(s, lista, ev))
         if (ts) antes.replyTs = ts
       }

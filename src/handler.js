@@ -84,6 +84,7 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
           avisou = true
           reply(texto).catch(() => {})
         },
+        onNotice: (texto) => { reply(`[${sessao.name}] ${texto}`).catch(() => {}) },
       })
 
       if (r.sessionId) sessao.claudeSessionId = r.sessionId
@@ -237,7 +238,9 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
         // A deck session named `wpp` somewhere else is not this bot's to recycle:
         // it may be yours. Say so instead of stopping it.
         if (sessions.kind === 'deck') {
-          return reply(`Já existe uma sessão [${SESSAO_WPP}] no agent-deck em ${sessao.cwd}. Não mexo nela: renomeie ou apague pelo deck e mande /wpp de novo.`)
+          return reply(
+            `Já existe uma sessão [${SESSAO_WPP}] no agent-deck em ${sessao.cwd}, mas a minha fica em ${wpp.agentCwd}.` +
+              ' Não mexo na sua: renomeie ou apague ela pelo deck e mande /wpp de novo.')
         }
         sessions.end(SESSAO_WPP)
         sessao = null

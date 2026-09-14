@@ -129,9 +129,16 @@ not ask for over WhatsApp:
 - `⏸️ [conductor-dw] parou e está esperando você: …` — a session ended a turn
   with a new reply;
 - `⚠️ [x] entrou em erro.`
+- `🔔 [conductor-infra] precisa de você: …` — a conductor heartbeat listed a
+  `NEED:` you had not been told about.
 
 Replies you already got through a conversation are not repeated, and a restart
-does not replay what was already there. What counts as worth a message lives in
+does not replay what was already there. A pending `NEED:` is told once, however
+the conductor rewords it: it is identified by the sessions it names and whether
+they have run since. It comes back only for another session, for one that ran
+or got input and needs you again, or after you talk to that conductor. What was
+already told is kept in `notify-state.json`, so a restart does not repeat it.
+What counts as worth a message lives in
 `src/notifyRules.js`; return `null` there for anything that turns out to be
 noise.
 

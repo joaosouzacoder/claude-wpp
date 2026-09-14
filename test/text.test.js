@@ -27,3 +27,12 @@ test('nenhum pedaço ultrapassa o limite', () => {
   const texto = Array.from({ length: 50 }, (_, i) => `linha ${i} com algum conteúdo`).join('\n')
   for (const parte of chunkText(texto, 120)) assert.ok(parte.length <= 120)
 })
+
+test('linha maior que o limite quebra entre palavras, nunca no meio de uma', () => {
+  const palavras = Array.from({ length: 40 }, (_, i) => `pal${String(i).padStart(2, '0')}`)
+  const texto = palavras.join(' ')
+  const partes = chunkText(texto, 23)
+  assert.ok(partes.length > 1)
+  assert.ok(partes.every((p) => p.length <= 23))
+  assert.deepEqual(partes.flatMap((p) => p.split(' ')), palavras)
+})

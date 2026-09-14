@@ -85,7 +85,30 @@ test('/wpp não mexe numa sessão wpp do deck que aponta para outro lugar', asyn
   await handler.handle('/wpp responde a Ana')
   assert.equal(enviados.length, 0)
   assert.deepEqual(deck.log, [])
-  assert.match(ditos.at(-1), /Não mexo nela/)
+  assert.match(ditos.at(-1), /Não mexo na sua/)
+})
+
+test('a recusa do /wpp diz onde a sessão está e onde a minha deveria estar', async () => {
+  const { handler, ditos, dir } = montar([{ id: 'w', title: 'wpp', status: 'waiting', path: '/outro/lugar', parentId: null }])
+  await handler.handle('/wpp responde a Ana')
+  // Without both paths the message is a dead end: it never says why it refused.
+  assert.match(ditos.at(-1), /\/outro\/lugar/)
+  assert.match(ditos.at(-1), new RegExp(join(dir, 'agent').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+})
+
+test('/wpp reaproveita a sessão wpp que é dela, sem tentar criar outra', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'handler-deck-'))
+  mkdirSync(join(dir, 'agent'))
+  const { handler, deck, enviados } = montar(
+    [{ id: 'w', title: 'wpp', status: 'waiting', path: join(dir, 'agent'), parentId: null }],
+    { dir },
+  )
+  await handler.handle('/wpp responde a Ana')
+  // The guard is about someone else's session, not about its own: a second
+  // /wpp must land in the session the first one created.
+  assert.deepEqual(deck.log, [])
+  assert.equal(enviados.length, 1)
+  assert.equal(enviados[0].name, 'wpp')
 })
 
 test('/wpp cria a sessão dedicada no diretório do agente, sem trocar a ativa', async () => {
@@ -143,4 +166,14 @@ test('agent-deck que não lista no meio da conversa não derruba o handler', asy
   deck.list = async () => { throw new Error('tmux caiu') }
   await handler.handle('@conductor-dw segunda')
   assert.equal(enviados.length, 2)
+})
+
+test('aviso do deck no meio de uma conversa chega com o nome da sessão', async () => {
+  const run = async (a) => {
+    a.onNotice('parou num pedido de permissão no agent-deck.')
+    return { ok: true, text: 'feito', sessionId: null, error: null }
+  }
+  const { handler, ditos } = montar([{ ...CONDUCTOR }], { run })
+  await handler.handle('@conductor-dw sobe')
+  assert.deepEqual(ditos, ['[conductor-dw] parou num pedido de permissão no agent-deck.', '[conductor-dw] feito'])
 })
