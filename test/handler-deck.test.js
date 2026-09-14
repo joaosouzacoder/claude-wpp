@@ -96,6 +96,21 @@ test('a recusa do /wpp diz onde a sessão está e onde a minha deveria estar', a
   assert.match(ditos.at(-1), new RegExp(join(dir, 'agent').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
 })
 
+test('/wpp reaproveita a sessão wpp que é dela, sem tentar criar outra', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'handler-deck-'))
+  mkdirSync(join(dir, 'agent'))
+  const { handler, deck, enviados } = montar(
+    [{ id: 'w', title: 'wpp', status: 'waiting', path: join(dir, 'agent'), parentId: null }],
+    { dir },
+  )
+  await handler.handle('/wpp responde a Ana')
+  // The guard is about someone else's session, not about its own: a second
+  // /wpp must land in the session the first one created.
+  assert.deepEqual(deck.log, [])
+  assert.equal(enviados.length, 1)
+  assert.equal(enviados[0].name, 'wpp')
+})
+
 test('/wpp cria a sessão dedicada no diretório do agente, sem trocar a ativa', async () => {
   const { handler, sessions, deck, enviados, dir } = montar([{ ...CONDUCTOR }])
   mkdirSync(join(dir, 'agent'))
