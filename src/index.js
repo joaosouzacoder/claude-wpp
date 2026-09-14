@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { loadConfig } from './config.js'
-import { createStore } from './store.js'
+import { createStore, createJsonFile } from './store.js'
 import { createSessions } from './sessions.js'
 import { createHandler } from './handler.js'
 import { createWhatsapp, aceitaDoBot, aceitaTudo, credenciaisValidas } from './whatsapp.js'
@@ -171,7 +171,15 @@ async function main() {
 
   // Only with the deck, and never allowed to take the bot down with it.
   const notifier = deck
-    ? createNotifier({ deck, sessions, notify: avisar, intervalMs: config.notifyIntervalMs, log })
+    ? createNotifier({
+      deck,
+      sessions,
+      notify: avisar,
+      maxChars: config.maxMessageChars,
+      memoria: createJsonFile(join(config.stateDir, 'notify-state.json')),
+      intervalMs: config.notifyIntervalMs,
+      log,
+    })
     : null
   notifier?.start()
 

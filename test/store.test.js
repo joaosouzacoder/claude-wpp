@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync, existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { createStore } from '../src/store.js'
+import { createStore, createJsonFile } from '../src/store.js'
 
 const fresh = () => join(mkdtempSync(join(tmpdir(), 'store-')), 'sub', 'state.json')
 
@@ -35,4 +35,14 @@ test('não deixa arquivo temporário para trás', () => {
   store.save({ sessions: [], activeSession: null })
   const sobras = readdirSync(join(path, '..')).filter((f) => f.endsWith('.tmp'))
   assert.deepEqual(sobras, [])
+})
+
+test('arquivo json genérico devolve o que foi salvo, e null quando falta ou está corrompido', () => {
+  const path = fresh()
+  const arquivo = createJsonFile(path)
+  assert.equal(arquivo.load(), null)
+  arquivo.save({ 'conductor-infra': ['aws-conta-antiga@2026-09-11T12:04:10Z'] })
+  assert.deepEqual(createJsonFile(path).load(), { 'conductor-infra': ['aws-conta-antiga@2026-09-11T12:04:10Z'] })
+  writeFileSync(path, '{ quebrado')
+  assert.equal(arquivo.load(), null)
 })

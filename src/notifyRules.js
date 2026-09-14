@@ -2,11 +2,9 @@
 // here. When a notification turns out to be noise, this is the file to change:
 // return null for what should stay silent.
 
-const PREVIA_MAX = 700
-
-function previa(texto) {
-  const limpo = String(texto ?? '').trim()
-  return limpo.length > PREVIA_MAX ? `${limpo.slice(0, PREVIA_MAX)}…` : limpo
+// The whole reply goes out; the notifier splits it to fit WhatsApp.
+function corpo(texto) {
+  return String(texto ?? '').trim()
 }
 
 function comoResponder(evento) {
@@ -17,8 +15,8 @@ function comoResponder(evento) {
 //           parentTitle, addressable, doneStatus, summary, content, needs }
 //
 // Already filtered before reaching here: replies you got through a
-// conversation, replies seen before a restart, and a conductor repeating the
-// same NEED lines it reported last time.
+// conversation, replies seen before a restart, and NEED lines about a pending
+// item you were already told about, however they are worded.
 export function formatNotification(evento) {
   const onde = evento.parentTitle ? ` (filho de ${evento.parentTitle})` : ''
 
@@ -37,7 +35,7 @@ export function formatNotification(evento) {
   }
 
   if (evento.kind === 'waiting') {
-    return `⏸️ [${evento.title}]${onde} parou e está esperando você:\n\n${previa(evento.content)}${comoResponder(evento)}`
+    return `⏸️ [${evento.title}]${onde} parou e está esperando você:\n\n${corpo(evento.content)}${comoResponder(evento)}`
   }
 
   if (evento.kind === 'error') {

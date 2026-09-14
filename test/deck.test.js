@@ -97,6 +97,88 @@ test('resposta mais velha que o pedido não é devolvida como se fosse nova', as
   assert.match(r.error, /terminou sem responder/)
 })
 
+// What Claude's pane shows while a tool waits for approval. agent-deck reports
+// this as `waiting`, the same status as a finished turn.
+const TELA_PERMISSAO = [
+  'Bash command',
+  "  python3 -c 'print(123)'",
+  ' Permission rule Bash(python3 *) requires confirmation for this command.',
+  ' Do you want to proceed?',
+  ' ❯ 1. Yes',
+  '   2. No',
+  ' Esc to cancel · Tab to amend',
+].join('\n')
+const TELA_LIVRE = '❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle)'
+
+test('sessão parada num pedido de permissão não recebe a mensagem: o Enter dela aprovaria o pedido', async () => {
+  const { deck, chamadas } = montar({
+    respostas: {
+      'session show': { code: 0, stdout: JSON.stringify({ status: 'waiting', tmux_session: 'agentdeck_cw' }) },
+      'tmux capture-pane': { code: 0, stdout: TELA_PERMISSAO, stderr: '' },
+    },
+  })
+  const r = await deck.run({ name: 'cw', prompt: 'oi' })
+  assert.equal(r.ok, false)
+  assert.match(r.error, /pedido de permissão/)
+  assert.match(r.error, /não enviei/i)
+  assert.equal(chamadas.find((c) => c.args[1] === 'send'), undefined)
+})
+
+test('send que volta cedo por causa de um pedido de permissão espera o turno terminar de verdade', async () => {
+  // The send lands, the turn then asks for approval, and `send --wait` returns
+  // with the previous reply. Approval comes later and the real answer follows.
+  let fase = 'livre'
+  const avisos = []
+  const { deck, avancar } = montar({
+    relogio: 5_000_000,
+    respostas: {
+      'session show': () => ({
+        code: 0,
+        stdout: JSON.stringify({ status: fase === 'trabalhando' ? 'running' : 'waiting', tmux_session: 'agentdeck_cw' }),
+      }),
+      'tmux capture-pane': () => {
+        // Approval arrives while the bot is polling; then the turn runs to the end.
+        if (fase === 'permissao' && avisos.length) fase = 'trabalhando'
+        else if (fase === 'trabalhando') fase = 'fim'
+        return { code: 0, stdout: fase === 'permissao' ? TELA_PERMISSAO : TELA_LIVRE, stderr: '' }
+      },
+      'session send': () => { fase = 'permissao'; return { code: 0, stdout: RECIBO_OK, stderr: 'Warning: output freshness timeout (5s) — response may be stale' } },
+      'session output': () => (fase === 'fim'
+        ? saida('subi para a main', new Date(9_000_000).toISOString())
+        : saida('resposta do turno anterior', new Date(1_000).toISOString())),
+    },
+  })
+  const r = await deck.run({ name: 'cw', prompt: 'pode subir', onNotice: (t) => { avisos.push(t); avancar(1000) } })
+  assert.deepEqual(r, { ok: true, text: 'subi para a main', sessionId: null, error: null })
+  assert.equal(avisos.length, 1)
+  assert.match(avisos[0], /pedido de permissão/)
+})
+
+test('sessão no meio de um turno: espera o turno acabar antes de mandar, e avisa que está esperando', async () => {
+  let consultas = 0
+  let enviadoComStatus = null
+  let status = 'running'
+  const avisos = []
+  const { deck } = montar({
+    relogio: 5_000_000,
+    respostas: {
+      'session show': () => {
+        consultas += 1
+        if (consultas > 3) status = 'waiting'
+        return { code: 0, stdout: JSON.stringify({ status, tmux_session: 'agentdeck_cw' }) }
+      },
+      'tmux capture-pane': { code: 0, stdout: TELA_LIVRE, stderr: '' },
+      'session send': () => { enviadoComStatus = status; return { code: 0, stdout: RECIBO_OK } },
+      'session output': saida('pronto', new Date(9_000_000).toISOString()),
+    },
+  })
+  const r = await deck.run({ name: 'cw', prompt: 'oi', onNotice: (t) => avisos.push(t) })
+  assert.equal(r.ok, true)
+  assert.equal(enviadoComStatus, 'waiting')
+  assert.equal(avisos.length, 1)
+  assert.match(avisos[0], /turno atual/)
+})
+
 test('interromper também manda Escape para o pane, não só para de esperar', async () => {
   const controle = new AbortController()
   const { deck, chamadas } = montar({
