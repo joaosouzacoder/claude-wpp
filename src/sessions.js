@@ -1,6 +1,7 @@
 import { statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
+import { readLastReply } from './transcript.js'
 
 const NOME_VALIDO = /^[a-z0-9_-]{1,24}$/i
 
@@ -145,6 +146,15 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
       if (!s) return
       s.lastActivityAt = now()
       persist()
+    },
+
+    // The underlying claude session runs detached from this process, so it
+    // can finish a turn while a restart is in progress. Lets recovery hand
+    // over what arrived in the meantime instead of asking to redo it.
+    async lastReply(name) {
+      const s = api.get(name)
+      if (!s?.claudeSessionId) return null
+      return readLastReply({ cwd: s.cwd, sessionId: s.claudeSessionId })
     },
   }
 

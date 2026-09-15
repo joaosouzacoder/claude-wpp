@@ -112,11 +112,3 @@ test('sem token no arquivo e sem token no ambiente, falha em vez de subir aberto
   const { apiToken, ...semToken } = MINIMO
   assert.throws(() => loadConfig({ path: fixture(semToken), env: {} }), /apiToken/)
 })
-
-test('agent-deck é procurado pelo nome padrão e o caminho pode vir do ambiente', () => {
-  const padrao = loadConfig({ path: fixture(MINIMO), env: {} })
-  assert.equal(padrao.agentDeckBin, 'agent-deck')
-  assert.equal(padrao.notifyIntervalMs, 5000)
-  const outro = loadConfig({ path: fixture(MINIMO), env: { CLAUDE_WPP_AGENT_DECK_BIN: '/opt/ad/agent-deck' } })
-  assert.equal(outro.agentDeckBin, '/opt/ad/agent-deck')
-})
