@@ -115,12 +115,18 @@ transcript (`~/.claude/projects/…/<session-id>.jsonl`, the same file
 `--resume` already depends on to work at all) — nothing is scraped from a
 terminal.
 
+The background agent only exists for the duration of one turn: as soon as its
+reply is read, claude-wpp stops and removes it (`claude stop` + `claude rm`),
+so it never lingers idle in `claude agents` between messages. The next message
+starts a fresh one with `--resume`, which rebuilds everything from the
+transcript regardless of whether the previous one is still around.
+
 | | |
 |---|---|
 | `/ls` | every session this bot knows about, busy or idle |
 | `@name text` | sends to that session; a busy one gets it after its current turn |
 | `/new [dir] [name]` | registers a session; nothing runs until the first message |
-| `/end [name]` | forgets the session here; the underlying background agent is interrupted the same way `/stop` does |
+| `/end [name]` | forgets the session here; interrupts it first if a turn is in flight |
 | `/stop` | runs `claude stop <id>` on the turn in flight, not just the wait |
 
 Because the background agent is not a child process of this daemon, a

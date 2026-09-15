@@ -110,6 +110,18 @@ export function createClaude({
     let bgId = null
     let avisouBloqueio = false
     const pararSessao = () => (bgId ? runCli(bin, ['stop', bgId], { timeoutMs: STOP_TIMEOUT_MS }).catch(() => {}) : null)
+    // The background agent has no reason to stay resident once its turn is
+    // over: the next message dispatches a fresh `--bg --resume`, which
+    // reconstructs everything from the transcript regardless of whether this
+    // one is still around. Leaving it running only holds a process open
+    // forever and clutters `claude agents` with sessions that already
+    // answered — which is what `/end` used to leave behind on an idle
+    // session, since there was nothing in flight left to abort.
+    const limparSessao = async () => {
+      if (!bgId) return
+      await pararSessao()
+      await runCli(bin, ['rm', bgId], { timeoutMs: STOP_TIMEOUT_MS }).catch(() => {})
+    }
 
     const aoAbortar = () => { pararSessao() }
     signal?.addEventListener('abort', aoAbortar, { once: true })
@@ -177,6 +189,7 @@ export function createClaude({
       clearTimeout(timerLento)
       clearInterval(batida)
       signal?.removeEventListener('abort', aoAbortar)
+      await limparSessao()
     }
   }
 

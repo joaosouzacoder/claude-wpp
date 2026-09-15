@@ -183,11 +183,13 @@ test('disparo que não confirma a tempo vira erro', async () => {
 
 test('abort chama stop com o id certo e devolve interrompido', async () => {
   const paradas = []
+  const removidas = []
   const { claude } = montar({
     respostas: {
       '--bg': { code: 0, stdout: BG_OUT('abc12345') },
       agents: { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', status: 'busy' }]) },
       stop: (args) => { paradas.push(args[1]); return { code: 0 } },
+      rm: (args) => { removidas.push(args[1]); return { code: 0 } },
     },
   })
   const ac = new AbortController()
@@ -199,7 +201,10 @@ test('abort chama stop com o id certo e devolve interrompido', async () => {
   const r = await promessa
   assert.equal(r.ok, false)
   assert.match(r.error, /interrompid/i)
-  assert.deepEqual(paradas, ['abc12345'])
+  assert.ok(paradas.every((id) => id === 'abc12345') && paradas.length >= 1)
+  // Interromper não deixa a sessão pendurada esperando ninguém: ela some do
+  // `claude agents` do mesmo jeito que uma sessão que respondeu normalmente.
+  assert.deepEqual(removidas, ['abc12345'])
 })
 
 test('abort chegado durante o disparo ainda para a sessão assim que o id é conhecido', async () => {
@@ -214,7 +219,7 @@ test('abort chegado durante o disparo ainda para a sessão assim que o id é con
   const r = await claude.run({ ...base, signal: ac.signal })
   assert.equal(r.ok, false)
   assert.match(r.error, /interrompid/i)
-  assert.deepEqual(paradas, ['abc12345'])
+  assert.ok(paradas.every((id) => id === 'abc12345') && paradas.length >= 1)
 })
 
 test('timeoutMs excedido chama stop e devolve erro de tempo limite', async () => {
@@ -229,7 +234,22 @@ test('timeoutMs excedido chama stop e devolve erro de tempo limite', async () =>
   const r = await claude.run({ ...base, timeoutMs: 100 })
   assert.equal(r.ok, false)
   assert.match(r.error, /tempo/i)
-  assert.deepEqual(paradas, ['abc12345'])
+  assert.ok(paradas.every((id) => id === 'abc12345') && paradas.length >= 1)
+})
+
+test('sessão que termina normalmente é removida do claude agents, não fica pendurada', async () => {
+  const removidas = []
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', status: 'idle' }]) },
+      rm: (args) => { removidas.push(args[1]); return { code: 0 } },
+    },
+    readReply: () => ({ content: 'pronto', timestamp: new Date(2_000_000).toISOString() }),
+  })
+  const r = await claude.run({ ...base })
+  assert.equal(r.ok, true)
+  assert.deepEqual(removidas, ['abc12345'])
 })
 
 test('dispara onSlow enquanto o run demora de verdade', async () => {
