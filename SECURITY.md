@@ -45,6 +45,23 @@ SIM swap is a full host compromise, not a messaging inconvenience.
 - **No credentials in the repo.** `config.json` is gitignored; the WhatsApp
   session state lives in `~/.local/state/claude-wpp/` and never enters the tree.
 
+### Sessions write into Claude Code's own global config
+
+Each session is a native `claude --bg` background agent (see README). The
+first time it uses a folder Claude has never opened, it marks that folder
+trusted by writing `hasTrustDialogAccepted: true` into `~/.claude.json` —
+Claude Code's own state file, undocumented and shared by every Claude Code
+session on this machine, including your interactive ones and any IDE
+integration. The write only ever sets that one boolean on the one project
+entry being launched, and re-reads the file immediately before writing to
+keep the window small, but it cannot be made atomic against a concurrent
+write from another Claude Code process, and a bug here touches a file your
+whole Claude Code setup depends on, not just this project's own state.
+
+If that risk is not acceptable, do not point the bot at directories it has
+never used — pre-open them with an interactive `claude` session yourself
+first, so `/new` never needs to write to `~/.claude.json` at all.
+
 ### Audio transcription sends data to a third party
 
 Audio support is the only feature that leaves the host. If `openaiApiKey` is

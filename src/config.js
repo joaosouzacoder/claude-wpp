@@ -8,10 +8,6 @@ const DEFAULTS = {
   apiToken: null,
   stateDir: join(homedir(), '.local', 'state', 'claude-wpp'),
   claudeBin: 'claude',
-  // When this binary answers, sessions live in agent-deck; otherwise the bot
-  // keeps its own headless sessions, exactly as before agent-deck existed.
-  agentDeckBin: 'agent-deck',
-  notifyIntervalMs: 5000,
   defaultCwd: homedir(),
   slowNoticeMs: 8000,
   heartbeatMs: 300000,
@@ -37,7 +33,6 @@ const ENV_MAP = {
   WPP_TOKEN: ['apiToken', String],
   CLAUDE_WPP_STATE_DIR: ['stateDir', String],
   CLAUDE_WPP_CLAUDE_BIN: ['claudeBin', String],
-  CLAUDE_WPP_AGENT_DECK_BIN: ['agentDeckBin', String],
   CLAUDE_WPP_DEFAULT_CWD: ['defaultCwd', String],
   OPENAI_API_KEY: ['openaiApiKey', String],
 }

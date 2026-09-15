@@ -159,3 +159,14 @@ test('interrompidas() lista só o que morreu no meio', () => {
   const revividas = createSessions({ store, defaultCwd: dir })
   assert.deepEqual(revividas.interrompidas().map((s) => s.name), ['api'])
 })
+
+test('lastReply() sem claudeSessionId ainda gravado devolve null', async () => {
+  const { sessions, dir } = novo()
+  sessions.create({ cwd: dir, name: 'api' })
+  assert.equal(await sessions.lastReply('api'), null)
+})
+
+test('lastReply() de sessão desconhecida devolve null', async () => {
+  const { sessions } = novo()
+  assert.equal(await sessions.lastReply('fantasma'), null)
+})

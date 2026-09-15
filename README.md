@@ -104,49 +104,42 @@ list the failing tests
 > [infra] /dev/sda1 at 81%
 ```
 
-## Sessions in agent-deck (optional)
+## Sessions are native Claude Code background agents
 
-If [agent-deck](https://github.com/asheshgoplani/agent-deck) answers on boot,
-the bot stops keeping sessions of its own and talks to the deck's instead: the
-conversation you have on WhatsApp is the same one you see in the tmux pane, and
-conductors and their children are reachable by title. Without agent-deck the
-bot behaves exactly as described above. The log line on boot says which mode is
-running.
+Each session is a `claude --bg` background agent — the same kind `claude
+agents` lists and `claude attach <id>` opens outside the bot. `/new` only
+registers the name and directory; the first message to it starts the actual
+background agent, and every later message continues the same conversation
+with `--resume`. The reply is read straight from the conversation's own
+transcript (`~/.claude/projects/…/<session-id>.jsonl`, the same file
+`--resume` already depends on to work at all) — nothing is scraped from a
+terminal.
 
-| | agent-deck mode |
+| | |
 |---|---|
-| `/ls` | every session in the deck, with its status, children under their conductor |
-| `@title text` | sends to that deck session; a busy conductor gets it after its current turn |
-| bare text | goes to the active session, or to a `home` session in the deck |
-| `/new [dir] [name]` | creates a root session in the deck, in the `whatsapp` group |
-| `/end [name]` | **stops** the session; it stays in the deck, and messaging it starts it again |
-| `/stop` | interrupts the turn in the pane (Escape), not just the wait |
+| `/ls` | every session this bot knows about, busy or idle |
+| `@name text` | sends to that session; a busy one gets it after its current turn |
+| `/new [dir] [name]` | registers a session; nothing runs until the first message |
+| `/end [name]` | forgets the session here; the underlying background agent is interrupted the same way `/stop` does |
+| `/stop` | runs `claude stop <id>` on the turn in flight, not just the wait |
 
-The bot also writes on its own when something happens in the deck that you did
-not ask for over WhatsApp:
+Because the background agent is not a child process of this daemon, a
+`claude-wpp` restart does not kill work in progress: if the daemon comes back
+up before the turn ends, `/retomar` catches it up; if the turn had already
+finished while nobody was listening, the next boot delivers that answer
+directly instead of asking you to redo it.
 
-- `✅ [daily-sync] terminou: …` — a session printed agent-deck's completion line;
-- `⏸️ [conductor-dw] parou e está esperando você: …` — a session ended a turn
-  with a new reply;
-- `⚠️ [x] entrou em erro.`
-- `🔔 [conductor-infra] precisa de você: …` — a conductor heartbeat listed a
-  `NEED:` you had not been told about.
+A folder this daemon has never used goes through Claude Code's one-time "do
+you trust this folder?" dialog — which a background agent sits on forever
+instead of skipping, unlike the plain `-p` calls the `/wpp` check still uses.
+For a folder `/new` creates itself, claude-wpp marks it trusted ahead of time
+by writing into `~/.claude.json`, Claude Code's own global state file, shared
+by every Claude Code session on this machine. **Read
+[SECURITY.md](SECURITY.md) for what that means.**
 
-Replies you already got through a conversation are not repeated, and a restart
-does not replay what was already there. A pending `NEED:` is told once, however
-the conductor rewords it: it is identified by the sessions it names and whether
-they have run since. It comes back only for another session, for one that ran
-or got input and needs you again, or after you talk to that conductor. What was
-already told is kept in `notify-state.json`, so a restart does not repeat it.
-What counts as worth a message lives in
-`src/notifyRules.js`; return `null` there for anything that turns out to be
-noise.
-
-Each mode has its own state file (`state.json`, `deck-state.json`), so removing
-agent-deck brings the old headless sessions back as they were. A folder Claude
-has never opened asks, once, whether to trust it; for sessions the bot itself
-starts it answers yes, since headless `claude -p` never asked either. The
-conditional-schedule check (`/wpp`) always runs headless, whichever mode is on.
+You can watch or nudge an in-flight run yourself, the same way you would any
+other background agent on this host: `claude agents` lists it, `claude attach
+<id>` opens it in a terminal, `claude logs <id>` prints its raw output.
 
 ## Your own WhatsApp
 

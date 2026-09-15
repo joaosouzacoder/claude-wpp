@@ -1,150 +1,269 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, mkdtempSync } from 'node:fs'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
-import { fileURLToPath } from 'node:url'
-import { runClaude } from '../src/claude.js'
+import { createClaude, parseBgId } from '../src/claude.js'
 
-const BIN = fileURLToPath(new URL('./fake-claude.sh', import.meta.url))
-const argsFile = () => join(mkdtempSync(join(tmpdir(), 'args-')), 'args.txt')
+const BG_OUT = (id, name) => `backgrounded · \x1b[36m${id}\x1b[39m${name ? ` · ${name}` : ''}\n  claude agents  list sessions\n`
 
-const base = { bin: BIN, cwd: tmpdir(), prompt: 'oi', slowNoticeMs: 50, timeoutMs: 5000 }
+// Answers each CLI call from a table keyed by the first argument(s), and
+// records every call so a test can check what run() actually asked for.
+function montar({ respostas = {}, relogio = 1_000_000, trust, readReply } = {}) {
+  const chamadas = []
+  let agora = relogio
+  const runCli = async (bin, args, opts = {}) => {
+    chamadas.push({ bin, args, opts })
+    const chave = args[0]
+    const r = respostas[chave]
+    const v = typeof r === 'function' ? await r(args, opts, chamadas) : r
+    return v ?? { code: 0, stdout: '', stderr: '' }
+  }
+  const claude = createClaude({
+    runCli,
+    trust: trust ?? (() => {}),
+    readReply: readReply ?? (() => null),
+    sleep: async () => { agora += 500 },
+    now: () => agora,
+  })
+  return { claude, chamadas, avancar: (ms) => { agora += ms } }
+}
 
-test('sessão nova não passa --resume e devolve o session_id', async () => {
-  const file = argsFile()
-  process.env.FAKE_ARGS_FILE = file
-  process.env.FAKE_MODE = 'ok'
-  const r = await runClaude({ ...base })
+const base = { cwd: '/tmp/algum', prompt: 'oi', slowNoticeMs: 50, timeoutMs: 5000 }
+
+test('parseBgId lê o id apesar da cor ANSI', () => {
+  assert.equal(parseBgId(BG_OUT('03c3d989', 'api')), '03c3d989')
+  assert.equal(parseBgId('nada aqui'), null)
+})
+
+test('sessão nova confia no diretório, dispara sem --resume e devolve o sessionId da lista', async () => {
+  const confiadas = []
+  const { claude, chamadas } = montar({
+    trust: (cwd) => confiadas.push(cwd),
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345', 'api') },
+      agents: { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'full-uuid-1', status: 'idle' }]) },
+    },
+    readReply: () => ({ content: 'pronto', timestamp: new Date(2_000_000).toISOString() }),
+  })
+
+  const r = await claude.run({ ...base })
+  assert.deepEqual(r, { ok: true, text: 'pronto', sessionId: 'full-uuid-1', error: null })
+  assert.deepEqual(confiadas, ['/tmp/algum'])
+
+  const disparo = chamadas.find((c) => c.args[0] === '--bg')
+  assert.deepEqual(disparo.args, ['--bg', '--dangerously-skip-permissions', 'oi'])
+})
+
+test('sessão existente passa --resume com o id e não confia de novo no diretório', async () => {
+  const confiadas = []
+  const { claude, chamadas } = montar({
+    trust: (cwd) => confiadas.push(cwd),
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-antigo', status: 'idle' }]) },
+    },
+    readReply: () => ({ content: 'ok', timestamp: new Date(2_000_000).toISOString() }),
+  })
+
+  await claude.run({ ...base, name: 'api', sessionId: 'sid-antigo' })
+  assert.deepEqual(confiadas, [])
+
+  const disparo = chamadas.find((c) => c.args[0] === '--bg')
+  assert.deepEqual(disparo.args, ['--bg', '--dangerously-skip-permissions', '-n', 'api', '--resume', 'sid-antigo', 'oi'])
+})
+
+test('espera enquanto a sessão está busy e só lê a resposta quando termina', async () => {
+  let checagens = 0
+  const { claude, chamadas } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: () => {
+        checagens += 1
+        const status = checagens < 3 ? 'busy' : 'idle'
+        return { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', status }]) }
+      },
+    },
+    readReply: () => ({ content: 'demorei mas cheguei', timestamp: new Date(2_000_000).toISOString() }),
+  })
+
+  const r = await claude.run({ ...base })
   assert.equal(r.ok, true)
-  assert.equal(r.text, 'pronto')
-  assert.equal(r.sessionId, 'sid-ok')
-
-  const args = readFileSync(file, 'utf8').trim().split('\n')
-  assert.deepEqual(args, ['-p', 'oi', '--output-format', 'json', '--dangerously-skip-permissions'])
+  assert.equal(r.text, 'demorei mas cheguei')
+  assert.ok(checagens >= 3)
+  assert.equal(chamadas.filter((c) => c.args[0] === 'agents').length, checagens)
 })
 
-test('sessão existente passa --resume com o id', async () => {
-  const file = argsFile()
-  process.env.FAKE_ARGS_FILE = file
-  process.env.FAKE_MODE = 'ok'
-  await runClaude({ ...base, sessionId: 'sid-antigo' })
-  const args = readFileSync(file, 'utf8').trim().split('\n')
-  assert.deepEqual(args.slice(-2), ['--resume', 'sid-antigo'])
+test('resposta mais velha que o pedido vira erro em vez de parecer nova', async () => {
+  const { claude } = montar({
+    relogio: 5_000_000,
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', status: 'idle' }]) },
+    },
+    readReply: () => ({ content: 'resposta velha', timestamp: new Date(1_000_000).toISOString() }),
+  })
+
+  const r = await claude.run({ ...base })
+  assert.equal(r.ok, false)
+  assert.match(r.error, /terminou sem responder em texto/)
 })
 
-test('dispara onSlow uma única vez quando demora', async () => {
-  process.env.FAKE_MODE = 'slow'
-  delete process.env.FAKE_ARGS_FILE
-  let chamadas = 0
-  const r = await runClaude({ ...base, onSlow: () => { chamadas += 1 } })
-  assert.equal(chamadas, 1)
+test('sem nenhuma resposta gravada, erro diz que não conseguiu ler', async () => {
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', status: 'idle' }]) },
+    },
+    readReply: () => null,
+  })
+
+  const r = await claude.run({ ...base })
+  assert.equal(r.ok, false)
+  assert.match(r.error, /não consegui ler a resposta/)
+})
+
+test('bloqueado avisa uma vez só e continua esperando até responder', async () => {
+  let checagens = 0
+  let avisos = 0
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: () => {
+        checagens += 1
+        const bloqueado = checagens < 5
+        return {
+          code: 0,
+          stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', status: 'idle', state: bloqueado ? 'blocked' : 'done' }]),
+        }
+      },
+    },
+    readReply: () => ({ content: 'liberou', timestamp: new Date(2_000_000).toISOString() }),
+  })
+
+  const r = await claude.run({ ...base, onNotice: () => { avisos += 1 } })
   assert.equal(r.ok, true)
+  assert.equal(avisos, 1)
 })
 
-test('não dispara onSlow quando responde rápido', async () => {
-  process.env.FAKE_MODE = 'ok'
-  let chamadas = 0
-  await runClaude({ ...base, slowNoticeMs: 3000, onSlow: () => { chamadas += 1 } })
-  assert.equal(chamadas, 0)
+test('a sessão some da lista antes de responder: erro, não trava', async () => {
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: { code: 0, stdout: JSON.stringify([]) },
+    },
+  })
+  const r = await claude.run({ ...base })
+  assert.equal(r.ok, false)
 })
 
-test('timeout mata o processo e devolve erro', async () => {
-  process.env.FAKE_MODE = 'hang'
-  const r = await runClaude({ ...base, timeoutMs: 150 })
+test('disparo com exit diferente de zero vira erro com o stderr', async () => {
+  const { claude } = montar({
+    respostas: { '--bg': { code: 1, stdout: '', stderr: 'algo deu errado' } },
+  })
+  const r = await claude.run({ ...base })
+  assert.equal(r.ok, false)
+  assert.match(r.error, /algo deu errado/)
+})
+
+test('saída de disparo sem o id esperado vira erro legível', async () => {
+  const { claude } = montar({
+    respostas: { '--bg': { code: 0, stdout: 'isso não é o que eu esperava' } },
+  })
+  const r = await claude.run({ ...base })
+  assert.equal(r.ok, false)
+  assert.match(r.error, /não entendi/)
+})
+
+test('disparo que não confirma a tempo vira erro', async () => {
+  const { claude } = montar({
+    respostas: { '--bg': { code: null, stdout: '', stderr: '', timedOut: true } },
+  })
+  const r = await claude.run({ ...base })
+  assert.equal(r.ok, false)
+  assert.match(r.error, /não confirmou/)
+})
+
+test('abort chama stop com o id certo e devolve interrompido', async () => {
+  const paradas = []
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', status: 'busy' }]) },
+      stop: (args) => { paradas.push(args[1]); return { code: 0 } },
+    },
+  })
+  const ac = new AbortController()
+  const promessa = claude.run({ ...base, signal: ac.signal })
+  // A resolução chega no próximo tick da fila de microtarefas do runCli fake;
+  // abortar já no início do loop é o que este teste quer observar.
+  await Promise.resolve()
+  ac.abort()
+  const r = await promessa
+  assert.equal(r.ok, false)
+  assert.match(r.error, /interrompid/i)
+  assert.deepEqual(paradas, ['abc12345'])
+})
+
+test('abort chegado durante o disparo ainda para a sessão assim que o id é conhecido', async () => {
+  const paradas = []
+  const ac = new AbortController()
+  const { claude } = montar({
+    respostas: {
+      '--bg': async () => { ac.abort(); return { code: 0, stdout: BG_OUT('abc12345') } },
+      stop: (args) => { paradas.push(args[1]); return { code: 0 } },
+    },
+  })
+  const r = await claude.run({ ...base, signal: ac.signal })
+  assert.equal(r.ok, false)
+  assert.match(r.error, /interrompid/i)
+  assert.deepEqual(paradas, ['abc12345'])
+})
+
+test('timeoutMs excedido chama stop e devolve erro de tempo limite', async () => {
+  const paradas = []
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', status: 'busy' }]) },
+      stop: (args) => { paradas.push(args[1]); return { code: 0 } },
+    },
+  })
+  const r = await claude.run({ ...base, timeoutMs: 100 })
   assert.equal(r.ok, false)
   assert.match(r.error, /tempo/i)
+  assert.deepEqual(paradas, ['abc12345'])
 })
 
-test('saída que não é json vira erro legível', async () => {
-  process.env.FAKE_MODE = 'garbage'
-  const r = await runClaude({ ...base })
-  assert.equal(r.ok, false)
-  assert.match(r.error, /resposta/i)
-})
-
-test('is_error do claude vira erro', async () => {
-  process.env.FAKE_MODE = 'claude_error'
-  const r = await runClaude({ ...base })
-  assert.equal(r.ok, false)
-  assert.match(r.error, /deu ruim/)
-})
-
-test('processo que morre com stderr vira erro com o stderr', async () => {
-  process.env.FAKE_MODE = 'crash'
-  const r = await runClaude({ ...base })
-  assert.equal(r.ok, false)
-  assert.match(r.error, /boom/)
-})
-
-test('abort interrompe e devolve erro de cancelamento', async () => {
-  process.env.FAKE_MODE = 'hang'
-  const ac = new AbortController()
-  setTimeout(() => ac.abort(), 80)
-  const r = await runClaude({ ...base, signal: ac.signal })
-  assert.equal(r.ok, false)
-  assert.match(r.error, /interrompid/i)
-})
-
-test('bin inexistente vira erro, não exceção', async () => {
-  process.env.FAKE_MODE = 'ok'
-  const r = await runClaude({ ...base, bin: '/nao/existe/claude' })
-  assert.equal(r.ok, false)
-  assert.ok(r.error.length > 0)
-})
-
-// O João não quer teto de tempo: uma tarefa longa não pode ser morta no meio só
-// porque passou de um número. Sem teto, quem interrompe é o /stop.
-test('sem timeoutMs configurado, não existe teto: a execução longa termina', async () => {
-  process.env.FAKE_MODE = 'slow'
-  const r = await runClaude({ ...base, timeoutMs: null, slowNoticeMs: 10 })
-  assert.equal(r.ok, true)
-  assert.equal(r.text, 'demorei')
-})
-
-test('teto zero também significa sem teto, não matar na hora', async () => {
-  process.env.FAKE_MODE = 'slow'
-  const r = await runClaude({ ...base, timeoutMs: 0 })
-  assert.equal(r.ok, true)
-  assert.equal(r.text, 'demorei')
-})
-
-test('sem teto, o abort continua sendo a forma de interromper', async () => {
-  process.env.FAKE_MODE = 'hang'
-  const ac = new AbortController()
-  setTimeout(() => ac.abort(), 100)
-  const r = await runClaude({ ...base, timeoutMs: null, signal: ac.signal })
-  assert.equal(r.ok, false)
-  assert.match(r.error, /interrompid/i)
-})
-
-// Sem teto de tempo (69148d1), um run travado é indistinguível de um run longo.
-// O heartbeat é o que torna a diferença observável sem matar trabalho legítimo.
-test('com heartbeatMs, onSlow repete enquanto o run não termina', async () => {
-  process.env.FAKE_MODE = 'slow'
-  delete process.env.FAKE_ARGS_FILE
-  const marcas = []
-  const r = await runClaude({
-    ...base, timeoutMs: null, slowNoticeMs: 40, heartbeatMs: 60, onSlow: (ms) => marcas.push(ms),
+test('dispara onSlow enquanto o run demora de verdade', async () => {
+  const claude = createClaude({
+    runCli: async (bin, args) => {
+      if (args[0] === '--bg') return { code: 0, stdout: BG_OUT('abc12345') }
+      await new Promise((r) => setTimeout(r, 15))
+      return { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', status: 'idle' }]) }
+    },
+    trust: () => {},
+    readReply: () => ({ content: 'ok', timestamp: new Date().toISOString() }),
+    sleep: () => Promise.resolve(),
   })
-  assert.equal(r.ok, true)
-  assert.ok(marcas.length >= 3, `esperava vários avisos, vieram ${marcas.length}`)
-  assert.ok(marcas.at(-1) > marcas[0], 'o tempo decorrido tem que crescer a cada aviso')
-})
-
-test('onSlow recebe o tempo decorrido do run', async () => {
-  process.env.FAKE_MODE = 'slow'
-  const marcas = []
-  await runClaude({ ...base, slowNoticeMs: 40, onSlow: (ms) => marcas.push(ms) })
-  assert.equal(marcas.length, 1)
-  assert.ok(marcas[0] >= 40, `esperava >=40ms, veio ${marcas[0]}`)
-})
-
-test('o heartbeat para quando o run termina', async () => {
-  process.env.FAKE_MODE = 'ok'
   let chamadas = 0
-  await runClaude({ ...base, slowNoticeMs: 10, heartbeatMs: 10, onSlow: () => { chamadas += 1 } })
-  const depoisDoFim = chamadas
-  await new Promise((r) => setTimeout(r, 80))
-  assert.equal(chamadas, depoisDoFim, 'não pode continuar avisando depois de resolver')
+  const r = await claude.run({ ...base, slowNoticeMs: 20, onSlow: () => { chamadas += 1 } })
+  assert.equal(r.ok, true)
+  assert.equal(chamadas, 1)
+})
+
+test('com heartbeatMs, onSlow repete enquanto a sessão segue busy', async () => {
+  let checagens = 0
+  const claude = createClaude({
+    runCli: async (bin, args) => {
+      if (args[0] === '--bg') return { code: 0, stdout: BG_OUT('abc12345') }
+      checagens += 1
+      await new Promise((r) => setTimeout(r, 15))
+      return { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', status: checagens < 6 ? 'busy' : 'idle' }]) }
+    },
+    trust: () => {},
+    readReply: () => ({ content: 'ok', timestamp: new Date().toISOString() }),
+    sleep: () => Promise.resolve(),
+  })
+  const marcas = []
+  const r = await claude.run({ ...base, slowNoticeMs: 20, heartbeatMs: 30, onSlow: (ms) => marcas.push(ms) })
+  assert.equal(r.ok, true)
+  assert.ok(marcas.length >= 2, `esperava vários avisos, vieram ${marcas.length}`)
 })
