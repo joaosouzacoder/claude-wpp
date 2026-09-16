@@ -5,7 +5,7 @@ import { createSessions } from './sessions.js'
 import { createHandler } from './handler.js'
 import { createWhatsapp, aceitaDoBot, aceitaTudo, credenciaisValidas } from './whatsapp.js'
 import { createApi } from './api.js'
-import { runClaude } from './claude.js'
+import { runClaude, listAgents } from './claude.js'
 import { transcribe } from './transcribe.js'
 import { openDb } from './db.js'
 import { createCapture } from './capture.js'
@@ -132,6 +132,7 @@ async function main() {
     transcribe,
     reply: avisar,
     config,
+    listAgents,
     wpp: pessoal && {
       outbox: pessoal.outbox,
       agentCwd: config.agentCwd,

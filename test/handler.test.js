@@ -10,7 +10,7 @@ import { transcribe as transcribeReal } from '../src/transcribe.js'
 import { openDb } from '../src/db.js'
 import { createOutbox } from '../src/outbox.js'
 
-function montar({ run, transcribe, config } = {}) {
+function montar({ run, transcribe, config, listAgents } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'handler-'))
   const sessions = createSessions({ store: createStore(join(dir, 'state.json')), defaultCwd: dir })
   const ditos = []
@@ -19,6 +19,7 @@ function montar({ run, transcribe, config } = {}) {
     run: run ?? (async () => ({ ok: true, text: 'resposta', sessionId: 'sid-1', error: null })),
     transcribe: transcribe ?? (async () => ({ ok: true, text: 'transcrição do áudio', error: null })),
     reply: async (t) => { ditos.push(t) },
+    listAgents,
     config: {
       slowNoticeMs: 10,
       timeoutMs: 1000,
@@ -88,6 +89,92 @@ test('/ls lista as sessões marcando a ativa', async () => {
   assert.match(ditos.at(-1), /a/)
   assert.match(ditos.at(-1), /b/)
   assert.match(ditos.at(-1), /\*/)
+})
+
+test('/manuais lista sessões do host que o bot não conhece', async () => {
+  const { handler, ditos, dir } = montar({
+    listAgents: async () => [
+      { sessionId: 'sid-manual', name: 'caws', cwd: dir, status: 'idle', kind: 'interactive' },
+      { sessionId: 'sid-bg', name: 'algo', cwd: dir, status: 'busy', kind: 'background' },
+    ],
+  })
+  await handler.handle('/manuais')
+  assert.match(ditos.at(-1), /1\. caws/)
+  assert.match(ditos.at(-1), /interativa/)
+  assert.match(ditos.at(-1), /2\. algo/)
+  assert.match(ditos.at(-1), /background/)
+})
+
+test('/manuais não repete uma sessão que o bot já rastreia', async () => {
+  const { handler, sessions, ditos, dir } = montar({
+    run: async () => ({ ok: true, text: 'ok', sessionId: 'sid-do-bot', error: null }),
+    listAgents: async () => [
+      { sessionId: 'sid-do-bot', name: 's1', cwd: dir, status: 'idle', kind: 'background' },
+      { sessionId: 'sid-fora', name: 'outra', cwd: dir, status: 'idle', kind: 'interactive' },
+    ],
+  })
+  await handler.handle('oi')
+  assert.equal(sessions.active().claudeSessionId, 'sid-do-bot')
+  await handler.handle('/manuais')
+  assert.doesNotMatch(ditos.at(-1), /s1/)
+  assert.match(ditos.at(-1), /outra/)
+})
+
+test('/manuais sem nenhuma sessão fora do bot avisa em vez de mandar lista vazia', async () => {
+  const { handler, ditos } = montar({ listAgents: async () => [] })
+  await handler.handle('/manuais')
+  assert.match(ditos.at(-1), /nenhuma sessão/i)
+})
+
+test('/manuais sem suporte a listAgents explica em vez de quebrar', async () => {
+  const { handler, ditos } = montar({ listAgents: null })
+  await handler.handle('/manuais')
+  assert.match(ditos.at(-1), /não consigo/i)
+})
+
+test('/importar registra a sessão da lista e ativa', async () => {
+  const { handler, sessions, ditos, dir } = montar({
+    listAgents: async () => [{ sessionId: 'sid-manual', name: 'caws', cwd: dir, status: 'idle', kind: 'interactive' }],
+  })
+  await handler.handle('/manuais')
+  await handler.handle('/importar 1 caws')
+  assert.equal(sessions.get('caws').claudeSessionId, 'sid-manual')
+  assert.equal(sessions.active().name, 'caws')
+  assert.match(ditos.at(-1), /importada/)
+})
+
+test('/importar sem nome cai no nome automático, igual /new', async () => {
+  const { handler, sessions, dir } = montar({
+    listAgents: async () => [{ sessionId: 'sid-manual', name: 'caws', cwd: dir, status: 'idle', kind: 'interactive' }],
+  })
+  await handler.handle('/manuais')
+  await handler.handle('/importar 1')
+  assert.equal(sessions.get('s1').claudeSessionId, 'sid-manual')
+})
+
+test('/importar com número que não existe explica em vez de quebrar', async () => {
+  const { handler, ditos, dir } = montar({
+    listAgents: async () => [{ sessionId: 'sid-manual', name: 'caws', cwd: dir, status: 'idle', kind: 'interactive' }],
+  })
+  await handler.handle('/manuais')
+  await handler.handle('/importar 9')
+  assert.match(ditos.at(-1), /não achei/i)
+})
+
+test('/importar sem /manuais antes explica em vez de quebrar', async () => {
+  const { handler, ditos } = montar()
+  await handler.handle('/importar 1')
+  assert.match(ditos.at(-1), /não achei/i)
+})
+
+test('/importar com nome que já existe devolve o erro do sessions.create', async () => {
+  const { handler, ditos, dir } = montar({
+    listAgents: async () => [{ sessionId: 'sid-manual', name: 'caws', cwd: dir, status: 'idle', kind: 'interactive' }],
+  })
+  await handler.handle(`/new ${dir} caws`)
+  await handler.handle('/manuais')
+  await handler.handle('/importar 1 caws')
+  assert.match(ditos.at(-1), /já existe/)
 })
 
 test('/use troca a ativa', async () => {

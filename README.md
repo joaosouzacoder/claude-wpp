@@ -30,6 +30,8 @@ systemctl --user start claude-wpp
 |---|---|
 | `/new [dir] [name]` | creates a session and makes it active |
 | `/ls` | lists the sessions |
+| `/manuais` | lists claude sessions on this host the bot does not control |
+| `/importar <n> [name]` | adopts session `n` from `/manuais` so `@name` can reach it |
 | `/use <name>` | switches the active session |
 | `/end [name]` | ends the session |
 | `/stop` | interrupts whatever the active session is doing |
@@ -142,6 +144,34 @@ For a folder `/new` creates itself, claude-wpp marks it trusted ahead of time
 by writing into `~/.claude.json`, Claude Code's own global state file, shared
 by every Claude Code session on this machine. **Read
 [SECURITY.md](SECURITY.md) for what that means.**
+
+### Picking up a session you started by hand
+
+`/ls` only shows sessions this bot created. A session you started yourself —
+`claude` in a terminal, or `claude --bg` from the CLI — is invisible to it
+until you adopt it:
+
+```
+/manuais
+1. caws — /home/user/projects/api  (idle · interactive)
+2. migration-check — /home/user/scratch  (busy · background)
+
+/importar 1 caws
+> Sessão [caws] importada de /home/user/projects/api. Ativa agora: [caws].
+
+@caws como ficou o build?
+> [caws] ...
+```
+
+`/manuais` lists every claude session on the host — via `claude agents
+--all`, so it includes ones this bot has never touched — except the ones
+already tracked here. `/importar <n> [name]` reuses that numbered list: it
+registers session `n`'s directory and conversation under `name` (or the usual
+`s1`, `s2`… if you don't give one), the same way `/new` would. Nothing about
+the original session changes; if it is still open in a terminal somewhere,
+messaging it here just continues the same conversation from another angle,
+the same way `claude --bg --resume` always does with a session that is
+already running.
 
 You can watch or nudge an in-flight run yourself, the same way you would any
 other background agent on this host: `claude agents` lists it, `claude attach

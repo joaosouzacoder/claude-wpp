@@ -201,3 +201,9 @@ const claudePadrao = createClaude()
 export function runClaude(opts) {
   return claudePadrao.run(opts)
 }
+
+// Every claude session on this host, not just the ones this bot started —
+// what `/manuais` shows so a session started by hand can be picked up here.
+export function listAgents(bin = 'claude') {
+  return claudePadrao.listAgents(bin)
+}
