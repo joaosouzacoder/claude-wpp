@@ -52,6 +52,32 @@ test('sessão nova confia no diretório, dispara sem --resume e devolve o sessio
   assert.deepEqual(disparo.args, ['--bg', '--dangerously-skip-permissions', 'oi'])
 })
 
+test('appendSystemPrompt vira --append-system-prompt quando informado', async () => {
+  const { claude, chamadas } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', status: 'idle' }]) },
+    },
+    readReply: () => ({ content: 'ok', timestamp: new Date(2_000_000).toISOString() }),
+  })
+  await claude.run({ ...base, appendSystemPrompt: 'formata pro whatsapp' })
+  const disparo = chamadas.find((c) => c.args[0] === '--bg')
+  assert.deepEqual(disparo.args, ['--bg', '--dangerously-skip-permissions', '--append-system-prompt', 'formata pro whatsapp', 'oi'])
+})
+
+test('sem appendSystemPrompt, a flag nem aparece', async () => {
+  const { claude, chamadas } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', status: 'idle' }]) },
+    },
+    readReply: () => ({ content: 'ok', timestamp: new Date(2_000_000).toISOString() }),
+  })
+  await claude.run({ ...base })
+  const disparo = chamadas.find((c) => c.args[0] === '--bg')
+  assert.ok(!disparo.args.includes('--append-system-prompt'))
+})
+
 test('sessão existente passa --resume com o id e não confia de novo no diretório', async () => {
   const confiadas = []
   const { claude, chamadas } = montar({

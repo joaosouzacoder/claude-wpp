@@ -6,6 +6,13 @@ import { formatDraft, formatQueue } from './wpp.js'
 
 const SESSAO_WPP = 'wpp'
 
+// Every reply dispatched from here is read on a phone screen inside
+// WhatsApp, not a terminal. Recorded once per conversation (Claude Code's
+// system-prompt snapshot), so it only takes effect from a session's first
+// message onward — a session /importar picked up already had its own
+// snapshot locked in before this bot ever touched it.
+const FORMATO_WHATSAPP = 'Your reply will be read on WhatsApp, not a terminal or an IDE. Format it for that: short paragraphs, plain text, no large tables or deeply nested markdown — write so it reads well on a phone screen.'
+
 const AJUDA = [
   'Comandos:',
   '/new [dir] [nome] — cria sessão e ativa',
@@ -90,6 +97,7 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
         slowNoticeMs: config.slowNoticeMs,
         heartbeatMs: config.heartbeatMs,
         timeoutMs: config.timeoutMs,
+        appendSystemPrompt: FORMATO_WHATSAPP,
         signal: sessao.abort.signal,
         onSlow: (decorrido) => {
           const texto = avisou

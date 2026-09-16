@@ -88,6 +88,7 @@ export function createClaude({
     slowNoticeMs = 8000,
     heartbeatMs = null,
     timeoutMs = null,
+    appendSystemPrompt = null,
     onSlow,
     onNotice,
     signal,
@@ -149,6 +150,7 @@ export function createClaude({
       const args = ['--bg', '--dangerously-skip-permissions']
       if (name) args.push('-n', name)
       if (sessionId) args.push('--resume', sessionId)
+      if (appendSystemPrompt) args.push('--append-system-prompt', appendSystemPrompt)
       args.push(prompt)
 
       const enviadoEm = now()
