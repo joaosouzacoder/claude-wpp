@@ -10,6 +10,8 @@ const AJUDA = [
   'Comandos:',
   '/new [dir] [nome] — cria sessão e ativa',
   '/ls — lista as sessões',
+  '/manuais — lista sessões do claude neste host que o bot não controla',
+  '/importar <n> [nome] — adota a sessão n da lista de /manuais',
   '/use <nome> — troca a sessão ativa',
   '/end [nome] — encerra (sem nome, encerra a ativa)',
   '/stop — interrompe o que a sessão ativa está fazendo',
@@ -51,7 +53,11 @@ function ociosidade(iso) {
   return `${Math.floor(min / 60)}h`
 }
 
-export function createHandler({ sessions, run, transcribe, reply, config, wpp = null }) {
+export function createHandler({ sessions, run, transcribe, reply, config, wpp = null, listAgents = null }) {
+  // What /manuais last showed, so /importar <n> knows which session that
+  // number meant. Only ever read right after a fresh /manuais.
+  let sessoesManuais = []
+
   async function responder(nome, texto) {
     for (const pedaco of chunkText(texto, config.maxMessageChars)) {
       await reply(`[${nome}] ${pedaco}`)
@@ -157,6 +163,39 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
         return `${marca} ${s.name}  ${s.cwd}  (${estado})`
       })
       return reply(linhas.join('\n'))
+    },
+
+    // Sessions started by hand (`claude` or `claude --bg`, outside the bot)
+    // don't show up in /ls: sessions.js is the source of truth for what this
+    // bot knows about, not the host. This is the window into the rest.
+    async manuais() {
+      if (!listAgents) return reply('Não consigo listar sessões do host agora.')
+      const todas = await listAgents(config.claudeBin).catch(() => null)
+      if (!todas) return reply('Não consegui listar as sessões do claude agora.')
+
+      const conhecidas = new Set(sessions.list().map((s) => s.claudeSessionId).filter(Boolean))
+      sessoesManuais = todas.filter((s) => s.sessionId && !conhecidas.has(s.sessionId))
+      if (!sessoesManuais.length) return reply('Nenhuma sessão do claude fora do bot agora.')
+
+      const linhas = sessoesManuais.map((s, i) => {
+        const tipo = s.kind === 'interactive' ? 'interativa' : 'background'
+        return `${i + 1}. ${s.name ?? '(sem nome)'} — ${s.cwd}  (${s.status ?? '?'} · ${tipo})`
+      })
+      return reply(linhas.join('\n'))
+    },
+
+    async importar(args) {
+      const indice = numeroDoRascunho(args[0])
+      if (!indice) return reply('Uso: /importar <número> [nome] — os números vêm de /manuais.')
+      const alvo = sessoesManuais[indice - 1]
+      if (!alvo) return reply(`Não achei o número ${indice}. Manda /manuais de novo pra atualizar a lista.`)
+
+      try {
+        const s = sessions.create({ cwd: alvo.cwd, name: args[1], claudeSessionId: alvo.sessionId })
+        return reply(`Sessão [${s.name}] importada de ${s.cwd}. Ativa agora: [${s.name}].`)
+      } catch (err) {
+        return reply(`Não deu: ${err.message}`)
+      }
     },
 
     async use(args) {

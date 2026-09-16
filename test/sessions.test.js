@@ -22,6 +22,13 @@ test('a primeira sessão criada vira a ativa', () => {
   assert.equal(sessions.active().name, 'api')
 })
 
+test('create() registra um claudeSessionId já existente em vez de começar do zero', () => {
+  const { sessions, dir } = novo()
+  const s = sessions.create({ cwd: dir, name: 'importada', claudeSessionId: 'sid-adotada' })
+  assert.equal(s.claudeSessionId, 'sid-adotada')
+  assert.equal(sessions.get('importada').claudeSessionId, 'sid-adotada')
+})
+
 test('gera nome automático quando não informado', () => {
   const { sessions, dir } = novo()
   assert.equal(sessions.create({ cwd: dir }).name, 's1')

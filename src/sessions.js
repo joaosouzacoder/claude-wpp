@@ -62,7 +62,9 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
     get: (name) => sessions.find((s) => s.name === name),
     active: () => sessions.find((s) => s.name === activeSession),
 
-    create({ cwd, name, activate = true } = {}) {
+    // `claudeSessionId` lets /importar register a conversation that already
+    // exists (started outside the bot) instead of always starting fresh.
+    create({ cwd, name, activate = true, claudeSessionId = null } = {}) {
       const nome = name?.trim() || proximoNome()
       if (!NOME_VALIDO.test(nome)) {
         throw new Error('nome inválido: use até 24 caracteres entre letras, números, - e _')
@@ -72,7 +74,7 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
       const sessao = {
         name: nome,
         cwd: expandir(cwd, defaultCwd),
-        claudeSessionId: null,
+        claudeSessionId,
         createdAt: now(),
         lastActivityAt: now(),
         pending: null,
