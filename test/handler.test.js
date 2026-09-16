@@ -48,6 +48,18 @@ test('mensagem sem sessão cria uma automaticamente', async () => {
   assert.equal(ditos.at(-1), '[s1] resposta')
 })
 
+test('toda mensagem leva a instrução de formatar pro whatsapp', async () => {
+  const vistos = []
+  const { handler } = montar({
+    run: async ({ appendSystemPrompt }) => {
+      vistos.push(appendSystemPrompt)
+      return { ok: true, text: 'ok', sessionId: 'sid-1', error: null }
+    },
+  })
+  await handler.handle('oi')
+  assert.match(vistos[0], /whatsapp/i)
+})
+
 test('grava o session_id devolvido pelo claude', async () => {
   const { handler, sessions } = montar()
   await handler.handle('oi')

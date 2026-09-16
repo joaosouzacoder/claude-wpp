@@ -49,6 +49,13 @@ systemctl --user start claude-wpp
 | voice note or audio | transcribed, then treated as if you had typed it |
 | image | forwarded to Claude; the caption is the prompt |
 
+Every message dispatched from here carries a system-prompt note (via
+`--append-system-prompt`) telling Claude the reply is read on a phone inside
+WhatsApp, not a terminal — so it favors short paragraphs and plain text over
+big tables or deeply nested markdown. Claude Code only renders a session's
+system prompt from its first message onward, so a session `/importar` picked
+up already had this decided before the bot ever touched it.
+
 ## Audio and images
 
 A voice note is transcribed by the OpenAI transcription API and then follows the
