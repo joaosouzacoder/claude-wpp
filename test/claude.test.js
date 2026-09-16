@@ -307,6 +307,85 @@ test('sessão que termina normalmente é removida do claude agents, não fica pe
   assert.deepEqual(removidas, ['abc12345'])
 })
 
+// Reported: /importar-ing a session that had already finished (before the
+// bot ever touched it) left its old, already-idle entry sitting in `claude
+// agents` forever — every message resumed it under a brand-new id instead
+// (there is nothing live to resume into), and only that new id got cleaned
+// up, not the stale original.
+test('varre outras entradas paradas da mesma conversa, não só a que este turno criou', async () => {
+  const removidas = []
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: {
+        code: 0,
+        stdout: JSON.stringify([
+          { id: 'velha-parada', sessionId: 'sid-1', status: 'idle' },
+          { id: 'abc12345', sessionId: 'sid-1', status: 'idle' },
+        ]),
+      },
+      rm: (args) => { removidas.push(args[1]); return { code: 0 } },
+    },
+    readReply: () => ({ content: 'pronto', timestamp: new Date(2_000_000).toISOString() }),
+  })
+  const r = await claude.run({ ...base, sessionId: 'sid-1' })
+  assert.equal(r.ok, true)
+  assert.ok(removidas.includes('abc12345'), 'remove a que este turno criou')
+  assert.ok(removidas.includes('velha-parada'), 'e também a que já estava parada de antes')
+})
+
+// Reproduz o relato original com mais fidelidade: --resume numa sessão cujo
+// processo já saiu de vez (não só ficou ociosa) bifurca para um sessionId
+// novo — a varredura tem que olhar tanto pro sessionId final quanto pro
+// original, senão a entrada de origem, com um sessionId que nunca mais
+// aparece de novo, fica órfã pra sempre.
+test('varre a entrada de origem mesmo quando o resume bifurca para um sessionId novo', async () => {
+  const removidas = []
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: {
+        code: 0,
+        stdout: JSON.stringify([
+          { id: 'sid-original-id', sessionId: 'sid-original', status: 'idle' },
+          { id: 'abc12345', sessionId: 'sid-bifurcada', status: 'idle' },
+        ]),
+      },
+      rm: (args) => { removidas.push(args[1]); return { code: 0 } },
+    },
+    readReply: () => ({ content: 'pronto', timestamp: new Date(2_000_000).toISOString() }),
+  })
+  const r = await claude.run({ ...base, sessionId: 'sid-original' })
+  assert.equal(r.ok, true)
+  assert.equal(r.sessionId, 'sid-bifurcada')
+  assert.ok(removidas.includes('abc12345'), 'remove a que este turno criou')
+  assert.ok(removidas.includes('sid-original-id'), 'e também a sessão de origem, que ficaria órfã pra sempre')
+})
+
+test('a varredura nunca mexe numa entrada que ainda está busy', async () => {
+  const removidas = []
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: {
+        code: 0,
+        stdout: JSON.stringify([
+          { id: 'ainda-rodando', sessionId: 'sid-1', status: 'busy' },
+          { id: 'abc12345', sessionId: 'sid-1', status: 'idle' },
+        ]),
+      },
+      rm: (args) => { removidas.push(args[1]); return { code: 0 } },
+    },
+    readReply: () => ({ content: 'pronto', timestamp: new Date(2_000_000).toISOString() }),
+  })
+  // Precondição do próprio guard de sessão ocupada: com outra entrada busy
+  // para o mesmo sessionId, este run já seria recusado antes de disparar —
+  // então a varredura só tem chance de rodar quando ela já foi vista idle.
+  const r = await claude.run({ ...base, sessionId: 'sid-2' })
+  assert.equal(r.ok, true)
+  assert.deepEqual(removidas, ['abc12345'])
+})
+
 test('dispara onSlow enquanto o run demora de verdade', async () => {
   const claude = createClaude({
     runCli: async (bin, args) => {

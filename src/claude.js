@@ -128,8 +128,13 @@ export function createClaude({
     }, slowNoticeMs)
 
     let bgId = null
+    let sessionIdCompleto = sessionId
     let avisouBloqueio = false
     const pararSessao = () => (bgId ? runCli(bin, ['stop', bgId], { timeoutMs: STOP_TIMEOUT_MS }).catch(() => {}) : null)
+    const pararERemover = async (id) => {
+      await runCli(bin, ['stop', id], { timeoutMs: STOP_TIMEOUT_MS }).catch(() => {})
+      await runCli(bin, ['rm', id], { timeoutMs: STOP_TIMEOUT_MS }).catch(() => {})
+    }
     // The background agent has no reason to stay resident once its turn is
     // over: the next message dispatches a fresh `--bg --resume`, which
     // reconstructs everything from the transcript regardless of whether this
@@ -137,10 +142,23 @@ export function createClaude({
     // forever and clutters `claude agents` with sessions that already
     // answered — which is what `/end` used to leave behind on an idle
     // session, since there was nothing in flight left to abort.
+    //
+    // A session picked up with /importar (or one that predates this cleanup)
+    // can already have its own finished-but-not-removed entry sitting under
+    // the same name from before this bot ever dispatched anything. Resuming
+    // a session that has genuinely exited (not just gone idle) does not
+    // reuse its id: claude forks the conversation into a brand-new sessionId
+    // and copies the history forward, so sessionIdCompleto can end up
+    // different from the sessionId this run was asked to resume — leaving
+    // the one it forked *from* permanently orphaned if only the current id
+    // is ever swept. Sweep stale entries under either.
     const limparSessao = async () => {
-      if (!bgId) return
-      await pararSessao()
-      await runCli(bin, ['rm', bgId], { timeoutMs: STOP_TIMEOUT_MS }).catch(() => {})
+      if (bgId) await pararERemover(bgId)
+      const alvos = new Set([sessionIdCompleto, sessionId].filter(Boolean))
+      if (!alvos.size) return
+      const lista = await listAgents(bin).catch(() => null)
+      const orfas = lista?.filter((s) => alvos.has(s.sessionId) && s.id && s.id !== bgId && s.status !== 'busy') ?? []
+      for (const orfa of orfas) await pararERemover(orfa.id)
     }
 
     const aoAbortar = () => { pararSessao() }
@@ -168,7 +186,6 @@ export function createClaude({
       // now that the background agent's id is known.
       if (signal?.aborted) { await pararSessao(); return { ok: false, text: '', sessionId, error: 'Interrompido.' } }
 
-      let sessionIdCompleto = sessionId
       let quietas = 0
       for (;;) {
         if (signal?.aborted) return { ok: false, text: '', sessionId: sessionIdCompleto, error: 'Interrompido.' }
