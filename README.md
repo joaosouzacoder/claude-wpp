@@ -128,7 +128,10 @@ The background agent only exists for the duration of one turn: as soon as its
 reply is read, claude-wpp stops and removes it (`claude stop` + `claude rm`),
 so it never lingers idle in `claude agents` between messages. The next message
 starts a fresh one with `--resume`, which rebuilds everything from the
-transcript regardless of whether the previous one is still around.
+transcript regardless of whether the previous one is still around — resuming
+a session whose process has already fully exited (rather than one merely left
+idle) forks into a new conversation id, and claude-wpp follows that id from
+then on, sweeping away the one it forked from so it doesn't linger either.
 
 | | |
 |---|---|
