@@ -195,7 +195,12 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
 
       const linhas = sessoesManuais.map((s, i) => {
         const tipo = s.kind === 'interactive' ? 'interativa' : 'background'
-        return `${i + 1}. ${s.name ?? '(sem nome)'} — ${s.cwd}  (${s.status ?? '?'} · ${tipo})`
+        // `status` (busy/idle) só existe com processo vivo. Sem ele, `state`
+        // é o que sobra — "done" é justamente o caso que já vimos travar de
+        // formas imprevisíveis ao ser resumido (o processo já saiu de vez).
+        const estado = s.status ?? s.state ?? '?'
+        const risco = !s.status && s.state === 'done' ? ' — processo já saiu, resumir pode travar' : ''
+        return `${i + 1}. ${s.name ?? '(sem nome)'} — ${s.cwd}  (${estado} · ${tipo})${risco}`
       })
       return reply(linhas.join('\n'))
     },

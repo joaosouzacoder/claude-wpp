@@ -117,6 +117,15 @@ test('/manuais lista sessões do host que o bot não conhece', async () => {
   assert.match(ditos.at(-1), /background/)
 })
 
+test('/manuais avisa quando uma sessão já saiu de vez (state done, sem status)', async () => {
+  const { handler, ditos, dir } = montar({
+    listAgents: async () => [{ sessionId: 'sid-morta', name: 'caws', cwd: dir, state: 'done', kind: 'background' }],
+  })
+  await handler.handle('/manuais')
+  assert.match(ditos.at(-1), /done/)
+  assert.match(ditos.at(-1), /pode travar/)
+})
+
 test('/manuais não repete uma sessão que o bot já rastreia', async () => {
   const { handler, sessions, ditos, dir } = montar({
     run: async () => ({ ok: true, text: 'ok', sessionId: 'sid-do-bot', error: null }),
