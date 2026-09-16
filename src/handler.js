@@ -38,6 +38,14 @@ function numeroDoRascunho(bruto) {
   return digitos ? Number(digitos) : null
 }
 
+// A claude-agents name is freeform (spaces, punctuation, whatever `-n` got);
+// a session name here is not. Squash it into something sessions.create()
+// accepts, or give up and let it fall back to the usual s1/s2.
+function nomeSugerido(bruto) {
+  const limpo = String(bruto ?? '').trim().replace(/[^a-z0-9_-]/gi, '-').replace(/^-+|-+$/g, '').slice(0, 24)
+  return limpo || null
+}
+
 function duracao(ms) {
   const min = Math.round(ms / 60000)
   if (min < 1) return 'menos de 1min'
@@ -190,8 +198,12 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
       const alvo = sessoesManuais[indice - 1]
       if (!alvo) return reply(`Não achei o número ${indice}. Manda /manuais de novo pra atualizar a lista.`)
 
+      // Without a name, keep the one the session already had (sanitized to
+      // what a session name may contain) instead of falling back straight to
+      // s1/s2 — you picked it from the list because you recognized that name.
+      const nome = args[1] || nomeSugerido(alvo.name)
       try {
-        const s = sessions.create({ cwd: alvo.cwd, name: args[1], claudeSessionId: alvo.sessionId })
+        const s = sessions.create({ cwd: alvo.cwd, name: nome, claudeSessionId: alvo.sessionId })
         return reply(`Sessão [${s.name}] importada de ${s.cwd}. Ativa agora: [${s.name}].`)
       } catch (err) {
         return reply(`Não deu: ${err.message}`)

@@ -143,9 +143,27 @@ test('/importar registra a sessão da lista e ativa', async () => {
   assert.match(ditos.at(-1), /importada/)
 })
 
-test('/importar sem nome cai no nome automático, igual /new', async () => {
+test('/importar sem nome mantém o nome que a sessão já tinha', async () => {
   const { handler, sessions, dir } = montar({
     listAgents: async () => [{ sessionId: 'sid-manual', name: 'caws', cwd: dir, status: 'idle', kind: 'interactive' }],
+  })
+  await handler.handle('/manuais')
+  await handler.handle('/importar 1')
+  assert.equal(sessions.get('caws').claudeSessionId, 'sid-manual')
+})
+
+test('/importar sem nome sanitiza um nome de sessão que não seria válido como está', async () => {
+  const { handler, sessions, dir } = montar({
+    listAgents: async () => [{ sessionId: 'sid-manual', name: 'claude-wpp agent migration!', cwd: dir, status: 'idle', kind: 'background' }],
+  })
+  await handler.handle('/manuais')
+  await handler.handle('/importar 1')
+  assert.equal(sessions.get('claude-wpp-agent-migrati')?.claudeSessionId, 'sid-manual')
+})
+
+test('/importar sem nome e sem nome aproveitável cai no automático, igual /new', async () => {
+  const { handler, sessions, dir } = montar({
+    listAgents: async () => [{ sessionId: 'sid-manual', name: null, cwd: dir, status: 'idle', kind: 'background' }],
   })
   await handler.handle('/manuais')
   await handler.handle('/importar 1')
