@@ -156,7 +156,7 @@ until you adopt it:
 1. caws — /home/user/projects/api  (idle · interactive)
 2. migration-check — /home/user/scratch  (busy · background)
 
-/importar 1 caws
+/importar 1
 > Sessão [caws] importada de /home/user/projects/api. Ativa agora: [caws].
 
 @caws como ficou o build?
@@ -164,14 +164,25 @@ until you adopt it:
 ```
 
 `/manuais` lists every claude session on the host — via `claude agents
---all`, so it includes ones this bot has never touched — except the ones
-already tracked here. `/importar <n> [name]` reuses that numbered list: it
-registers session `n`'s directory and conversation under `name` (or the usual
-`s1`, `s2`… if you don't give one), the same way `/new` would. Nothing about
-the original session changes; if it is still open in a terminal somewhere,
-messaging it here just continues the same conversation from another angle,
-the same way `claude --bg --resume` always does with a session that is
-already running.
+--all`, so it includes ones this bot has never touched, and also this bot's
+own machine-level neighbors (other tools' background agents) — except the
+ones already tracked here. `/importar <n> [name]` reuses that numbered list:
+it registers session `n`'s directory and conversation under `name` (or the
+session's own name, sanitized, or the usual `s1`, `s2`… if neither is usable)
+the same way `/new` would. Nothing about the original session changes; if it
+is still open in a terminal somewhere, messaging it here continues the same
+conversation from another angle, the same way `claude --bg --resume` always
+does with a session that is idle elsewhere.
+
+**A session that is genuinely busy elsewhere is refused, not queued or
+copied.** `claude --resume` on a session already running does start a second
+copy as documented, but if that turn had a background shell command still
+pending, the copy has been observed getting stuck forever instead of ever
+answering — a `claude` bug, not something this project works around. Every
+message checks the target's live status first and answers with an error
+instead of risking that: wait for it to go idle (`/manuais` shows the current
+status) and try again, or `claude attach <id>` on the host to see what it is
+doing.
 
 You can watch or nudge an in-flight run yourself, the same way you would any
 other background agent on this host: `claude agents` lists it, `claude attach

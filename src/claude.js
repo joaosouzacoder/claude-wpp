@@ -98,6 +98,25 @@ export function createClaude({
     // through this.
     if (!sessionId) trust(cwd)
 
+    // `--resume` on a session that is genuinely busy elsewhere (someone
+    // attached to it, or /importar picked one mid-turn) does start a copy
+    // like the CLI promises, but if that turn had a background shell command
+    // still pending, the copy has been observed getting stuck replaying it
+    // forever, landing in `state: blocked` with no way out but /stop. Refusing
+    // up front is cheaper than debugging a wedged copy after the fact.
+    if (sessionId) {
+      const lista = await listAgents(bin).catch(() => null)
+      const emUso = lista?.find((s) => s.sessionId === sessionId && s.status === 'busy')
+      if (emUso) {
+        return {
+          ok: false,
+          text: '',
+          sessionId,
+          error: `essa sessão está ocupada agora rodando de verdade em outro lugar (${emUso.id ?? 'sem id'}) — tenta de novo quando ela terminar, ou acompanhe com \`claude attach ${emUso.id ?? ''}\`.`,
+        }
+      }
+    }
+
     const comecou = now()
     let finalizado = false
     let batida = null

@@ -70,6 +70,35 @@ test('sessão existente passa --resume com o id e não confia de novo no diretó
   assert.deepEqual(disparo.args, ['--bg', '--dangerously-skip-permissions', '-n', 'api', '--resume', 'sid-antigo', 'oi'])
 })
 
+// A copy of a session that is busy elsewhere has been seen getting stuck
+// forever (`state: blocked`) if that turn had a background shell command
+// pending — a bug in claude itself, not something this code can fix. Refusing
+// up front is the mitigation.
+test('recusa --resume numa sessão que já está rodando de verdade em outro lugar', async () => {
+  const { claude, chamadas } = montar({
+    respostas: {
+      agents: { code: 0, stdout: JSON.stringify([{ id: 'outro-id', sessionId: 'sid-em-uso', status: 'busy' }]) },
+    },
+  })
+
+  const r = await claude.run({ ...base, sessionId: 'sid-em-uso' })
+  assert.equal(r.ok, false)
+  assert.match(r.error, /ocupada/)
+  assert.ok(!chamadas.some((c) => c.args[0] === '--bg'), 'não deveria nem tentar disparar')
+})
+
+test('sessão existente que está idle em outro lugar dispara normalmente', async () => {
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: { code: 0, stdout: JSON.stringify([{ id: 'outro-id', sessionId: 'sid-livre', status: 'idle' }]) },
+    },
+    readReply: () => ({ content: 'ok', timestamp: new Date(2_000_000).toISOString() }),
+  })
+  const r = await claude.run({ ...base, sessionId: 'sid-livre' })
+  assert.equal(r.ok, true)
+})
+
 test('espera enquanto a sessão está busy e só lê a resposta quando termina', async () => {
   let checagens = 0
   const { claude, chamadas } = montar({
