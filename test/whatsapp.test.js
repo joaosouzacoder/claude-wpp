@@ -1,9 +1,11 @@
-import { test } from 'node:test'
+import { test, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { classificar, aceitaDoBot, credenciaisValidas, atrasoReconexao } from '../src/whatsapp.js'
+import { EventEmitter } from 'node:events'
+import { DisconnectReason } from '@whiskeysockets/baileys'
+import { classificar, aceitaDoBot, credenciaisValidas, createWhatsapp, atrasoReconexao } from '../src/whatsapp.js'
 
 test('mensagem de texto simples continua sendo texto', () => {
   assert.deepEqual(classificar({ message: { conversation: 'oi claude' } }), {
@@ -153,4 +155,156 @@ test('me sem account não conta: o aparelho não foi assinado', () => {
   const dir = dirTemp()
   writeFileSync(join(dir, 'creds.json'), JSON.stringify({ me: { id: '5511911111111@s.whatsapp.net' } }))
   assert.equal(credenciaisValidas(dir), false)
+})
+
+// createWhatsapp() nunca tinha teste nenhum — só os helpers puros acima. Os
+// pontos de contato com o baileys são injetáveis (mesmo padrão de runCli em
+// claude.js) exatamente para isso: dirigir a máquina de estados de
+// conexão/reconexão e o loop de despacho de mensagens contra um socket falso.
+function socketFalso() {
+  const ev = new EventEmitter()
+  return {
+    ev,
+    sendMessage: mock.fn(async () => ({ key: { id: 'WA-FAKE' } })),
+    groupFetchAllParticipating: async () => ({}),
+    updateMediaMessage: async () => {},
+  }
+}
+
+function montarWhatsapp(overrides = {}) {
+  const dir = dirTemp()
+  const sockets = []
+  const criarSocket = mock.fn(() => {
+    const s = socketFalso()
+    sockets.push(s)
+    return s
+  })
+  const logs = { info: [], warn: [], error: [] }
+  const log = {
+    info: (m) => logs.info.push(m),
+    warn: (m) => logs.warn.push(m),
+    error: (m) => logs.error.push(m),
+    debug: () => {},
+  }
+  const wa = createWhatsapp({
+    authDir: dir,
+    mediaDir: join(dir, 'media'),
+    accept: () => true,
+    onMessage: async () => {},
+    label: 'teste',
+    log,
+    criarSocket,
+    autenticar: async () => ({ state: {}, saveCreds: () => {} }),
+    buscarVersao: async () => ({ version: [2, 3000, 0] }),
+    baixarMidia: async () => Buffer.from('x'),
+    ...overrides,
+  })
+  return { wa, sockets, criarSocket, logs, dir }
+}
+
+// abrir() faz dois awaits reais (autenticar, buscarVersao) antes de sequer
+// criar o socket — emitir num socket que ainda não existe é a própria corrida
+// que este arquivo está testando não ter, então os testes esperam por ele.
+async function aguardarSocket(sockets) {
+  for (let i = 0; i < 20 && sockets.length === 0; i += 1) await Promise.resolve()
+  if (!sockets.length) throw new Error('socket nunca foi criado')
+  return sockets[0]
+}
+
+test('connect() resolve quando o socket abre', async () => {
+  const { wa, sockets } = montarWhatsapp()
+  const conectando = wa.connect()
+  const sock = await aguardarSocket(sockets)
+  sock.ev.emit('connection.update', { connection: 'open' })
+  await conectando
+  assert.equal(wa.state(), 'open')
+})
+
+test('close por motivo comum tenta reconectar, sem exceder o teto de tempo', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    const { wa, sockets, criarSocket } = montarWhatsapp()
+    const conectando = wa.connect()
+    const sock = await aguardarSocket(sockets)
+    sock.ev.emit('connection.update', { connection: 'open' })
+    await conectando
+    assert.equal(criarSocket.mock.callCount(), 1)
+
+    sock.ev.emit('connection.update', { connection: 'close', lastDisconnect: { error: { output: { statusCode: 428 } } } })
+    assert.equal(wa.state(), 'closed')
+
+    // reconectar() já soma a primeira tentativa antes de calcular o atraso, então
+    // a primeira reconexão sai perto de atrasoReconexao(1) (~6s), não do base de
+    // 3s — 7200ms cobre o teto do jitter dessa tentativa (ver o teste de
+    // atrasoReconexao acima).
+    mock.timers.tick(7200)
+    await new Promise((r) => setImmediate(r))
+    assert.equal(criarSocket.mock.callCount(), 2, 'reconectou depois da queda')
+  } finally {
+    mock.timers.reset()
+  }
+})
+
+test('loggedOut rejeita o connect() e nunca tenta reconectar', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    const { wa, sockets, criarSocket } = montarWhatsapp()
+    const conectando = wa.connect()
+    const sock = await aguardarSocket(sockets)
+    sock.ev.emit('connection.update', {
+      connection: 'close',
+      lastDisconnect: { error: { output: { statusCode: DisconnectReason.loggedOut } } },
+    })
+
+    await assert.rejects(conectando, (err) => err.deslogado === true)
+
+    mock.timers.tick(60000)
+    await new Promise((r) => setImmediate(r))
+    assert.equal(criarSocket.mock.callCount(), 1, 'não tenta de novo depois de deslogado')
+  } finally {
+    mock.timers.reset()
+  }
+})
+
+test('mensagem que causa exceção não impede as seguintes de serem processadas', async () => {
+  const processadas = []
+  const { wa, sockets } = montarWhatsapp({
+    onMessage: async (m) => {
+      if (m.text === 'quebra') throw new Error('boom')
+      processadas.push(m.text)
+    },
+  })
+  const conectando = wa.connect()
+  const sock = await aguardarSocket(sockets)
+  sock.ev.emit('connection.update', { connection: 'open' })
+  await conectando
+
+  sock.ev.emit('messages.upsert', {
+    type: 'notify',
+    messages: [
+      { key: {}, message: { conversation: 'quebra' } },
+      { key: {}, message: { conversation: 'passa' } },
+    ],
+  })
+  // O handler do evento é assíncrono; dá um giro no loop pra ele terminar.
+  await new Promise((r) => setImmediate(r))
+
+  assert.deepEqual(processadas, ['passa'])
+})
+
+test('sendText usa o socket atual e devolve o id da mensagem enviada', async () => {
+  const { wa, sockets } = montarWhatsapp()
+  const conectando = wa.connect()
+  const sock = await aguardarSocket(sockets)
+  sock.ev.emit('connection.update', { connection: 'open' })
+  await conectando
+
+  const id = await wa.sendText('5511911111111', 'oi')
+  assert.equal(id, 'WA-FAKE')
+  assert.equal(sock.sendMessage.mock.callCount(), 1)
+})
+
+test('sendText sem conexão explica em vez de estourar dentro do baileys', async () => {
+  const { wa } = montarWhatsapp()
+  await assert.rejects(wa.sendText('5511911111111', 'oi'), /não está conectado/)
 })

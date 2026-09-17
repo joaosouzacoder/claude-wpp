@@ -1,8 +1,10 @@
-import { test } from 'node:test'
+import { test, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { openDb } from '../src/db.js'
 import { createOutbox } from '../src/outbox.js'
 import { createScheduler } from '../src/scheduler.js'
+
+const flush = () => new Promise((r) => setImmediate(r))
 
 // The scheduler talks to the world through send/decide/notify. Those are the
 // I/O boundary, so the tests hand it plain recorders and assert on the rows and
@@ -176,6 +178,81 @@ test('duas passadas simultâneas não mandam a mesma coisa duas vezes', async ()
   await Promise.all([a, b])
 
   assert.deepEqual(enviadas, ['traz o macbook'])
+})
+
+// start()/stop() são o único ponto de entrada que a produção de fato usa
+// (index.js chama scheduler.start()/.stop()) — os testes acima só exercitam
+// tick() diretamente, sem nunca provar que o próprio timer se comporta bem.
+function montarComTimer({ due, log = { error() {} } } = {}) {
+  return createScheduler({
+    outbox: { due: due ?? (() => []) },
+    send: async () => ({ ok: true, waId: 'WA' }),
+    decide: async () => ({ send: true, reason: 'nada mudou' }),
+    notify: async () => {},
+    log,
+    intervalMs: 1000,
+  })
+}
+
+test('start() chamado duas vezes não duplica o timer', async () => {
+  mock.timers.enable({ apis: ['setInterval'] })
+  try {
+    let chamadas = 0
+    const scheduler = montarComTimer({ due: () => { chamadas += 1; return [] } })
+    scheduler.start()
+    scheduler.start()
+    mock.timers.tick(1000)
+    await flush()
+    assert.equal(chamadas, 1, 'a segunda chamada a start() não deveria armar um segundo timer')
+  } finally {
+    mock.timers.reset()
+  }
+})
+
+test('stop() realmente para o timer, sem mais disparos depois', async () => {
+  mock.timers.enable({ apis: ['setInterval'] })
+  try {
+    let chamadas = 0
+    const scheduler = montarComTimer({ due: () => { chamadas += 1; return [] } })
+    scheduler.start()
+    mock.timers.tick(1000)
+    await flush()
+    assert.equal(chamadas, 1)
+
+    scheduler.stop()
+    mock.timers.tick(5000)
+    await flush()
+    assert.equal(chamadas, 1, 'nenhum disparo novo depois do stop()')
+  } finally {
+    mock.timers.reset()
+  }
+})
+
+test('um tick() que rejeita não trava o processo nem impede os próximos disparos', async () => {
+  mock.timers.enable({ apis: ['setInterval'] })
+  try {
+    let chamadas = 0
+    const erros = []
+    const scheduler = montarComTimer({
+      due: () => {
+        chamadas += 1
+        if (chamadas === 1) throw new Error('boom')
+        return []
+      },
+      log: { error: (m) => erros.push(m) },
+    })
+    scheduler.start()
+
+    mock.timers.tick(1000) // primeiro disparo: due() lança
+    await flush()
+    mock.timers.tick(1000) // segundo disparo: tem que acontecer normalmente
+    await flush()
+
+    assert.equal(chamadas, 2, 'o timer continua batendo mesmo depois de um tick() quebrado')
+    assert.match(erros.join('\n'), /boom/)
+  } finally {
+    mock.timers.reset()
+  }
 })
 
 test('um /no que chega enquanto a verificação condicional ainda está rodando vence o envio', async () => {

@@ -733,6 +733,33 @@ test('o pedido em voo é limpo mesmo quando o run falha', async () => {
   assert.equal(sessions.active().pending, null)
 })
 
+// run() rejeitando de verdade (não resolvendo {ok:false, error}, que é o jeito
+// normal dele reportar falha) é um caminho diferente — antes disso ser
+// tratado, a exceção pulava direto por cima da continuação que drena a fila,
+// deixando a mensagem seguinte órfã pra sempre.
+test('run() que rejeita (não só {ok:false}) ainda avisa o erro e drena a fila', async () => {
+  let liberar
+  const espera = new Promise((r) => { liberar = r })
+  const processados = []
+  const { handler, sessions, ditos } = montar({
+    run: async ({ prompt }) => {
+      processados.push(prompt)
+      if (processados.length === 1) { await espera; throw new Error('caiu de verdade') }
+      return { ok: true, text: 'segunda foi', sessionId: 'sid-2', error: null }
+    },
+  })
+
+  const primeira = handler.handle('primeira')
+  await new Promise((r) => setImmediate(r)) // deixa 'primeira' ocupar a sessão
+  const segunda = handler.handle('segunda') // enfileira atrás da que vai rejeitar
+  liberar()
+  await Promise.all([primeira, segunda])
+
+  assert.match(ditos.join('\n'), /Erro: caiu de verdade/, 'o usuário recebe o erro, não fica sem resposta nenhuma')
+  assert.deepEqual(processados, ['primeira', 'segunda'], 'a mensagem enfileirada não fica órfã')
+  assert.equal(sessions.active().busy, false)
+})
+
 test('recuperar() avisa sobre o pedido que morreu no restart', async () => {
   const { handler, sessions, ditos, dir } = montar()
   sessions.create({ cwd: dir, name: 'api' })
