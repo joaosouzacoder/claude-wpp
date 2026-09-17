@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -19,11 +19,17 @@ export function transcriptPath(cwd, sessionId, { home = homedir() } = {}) {
 // it. Returns null for anything that stops this from being a clean read:
 // missing file, no assistant turn yet, or a turn that produced no text (only
 // tool calls).
-export function readLastReply({ cwd, sessionId, home } = {}) {
+//
+// This process hosts every concurrent session's poll loop plus the HTTP API
+// and WhatsApp message intake on one event loop, and a transcript can grow
+// large over a long-lived conversation — a blocking read here would stall
+// all of that for however long it takes. Reading async offloads the actual
+// I/O to libuv's threadpool instead.
+export async function readLastReply({ cwd, sessionId, home } = {}) {
   if (!cwd || !sessionId) return null
   let raw
   try {
-    raw = readFileSync(transcriptPath(cwd, sessionId, { home }), 'utf8')
+    raw = await readFile(transcriptPath(cwd, sessionId, { home }), 'utf8')
   } catch {
     return null
   }

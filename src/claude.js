@@ -72,11 +72,21 @@ export function createClaude({
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   now = () => Date.now(),
 } = {}) {
+  // Throws when the listing itself could not be trusted (subprocess failed,
+  // timed out, or printed something that isn't the JSON array it always
+  // prints on success) — distinct from a successful call that simply does
+  // not contain the id being looked for. Callers that only care about
+  // best-effort listing (the busy precheck, the orphan sweep, /manuais) can
+  // still `.catch(() => null)` this; the poll loop below is the one place
+  // that needs to tell the two apart.
   async function listAgents(bin) {
     const r = await runCli(bin, ['agents', '--json', '--all'], { timeoutMs: DISPATCH_TIMEOUT_MS })
-    if (r.code !== 0) return null
+    if (r.code !== 0) {
+      throw new Error(r.timedOut ? 'claude agents não respondeu a tempo' : (r.stderr || r.stdout || '').trim().slice(0, 200) || `exit ${r.code}`)
+    }
     const d = lerJson(r.stdout)
-    return Array.isArray(d) ? d : null
+    if (!Array.isArray(d)) throw new Error('não entendi a saída de claude agents --json')
+    return d
   }
 
   async function run({
@@ -194,7 +204,18 @@ export function createClaude({
           return { ok: false, text: '', sessionId: sessionIdCompleto, error: `Passei do tempo limite (${Math.round(timeoutMs / 1000)}s) e cancelei.` }
         }
 
-        const lista = await listAgents(bin)
+        let lista
+        let falhaDaListagem = false
+        try {
+          lista = await listAgents(bin)
+        } catch {
+          // The status check itself failed (subprocess hiccup, timeout, bad
+          // output) — inconclusive, not "the agent is gone". Treating this
+          // the same as "vanished" would tear down a turn that is still
+          // genuinely running over one transient blip.
+          falhaDaListagem = true
+          lista = null
+        }
         const estado = lista?.find((s) => s.id === bgId) ?? null
         if (estado?.sessionId) sessionIdCompleto = estado.sessionId
 
@@ -209,6 +230,11 @@ export function createClaude({
             onNotice?.(`parou esperando algo no claude — rode \`claude attach ${bgId}\` no host pra ver o quê. Sua mensagem já chegou.`)
           }
           quietas = 0
+        } else if (falhaDaListagem) {
+          // Same quiet-tolerance a merely-idle agent gets, not zero — a
+          // failed status check earns the benefit of the doubt too.
+          quietas += 1
+          if (quietas >= OLHADAS_QUIETAS) break
         } else {
           quietas += 1
           if (!estado || quietas >= OLHADAS_QUIETAS) break
@@ -216,7 +242,7 @@ export function createClaude({
         await sleep(POLL_INTERVAL_MS)
       }
 
-      const resposta = readReply({ cwd, sessionId: sessionIdCompleto })
+      const resposta = await readReply({ cwd, sessionId: sessionIdCompleto })
       if (!resposta) return { ok: false, text: '', sessionId: sessionIdCompleto, error: `${name ?? bgId} respondeu, mas não consegui ler a resposta` }
       if (resposta.timestamp && Date.parse(resposta.timestamp) < enviadoEm) {
         return { ok: false, text: '', sessionId: sessionIdCompleto, error: `${name ?? bgId} recebeu, mas terminou sem responder em texto` }

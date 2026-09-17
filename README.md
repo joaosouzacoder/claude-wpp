@@ -33,7 +33,7 @@ systemctl --user start claude-wpp
 | `/manuais` | lists claude sessions on this host the bot does not control |
 | `/importar <n> [name]` | adopts session `n` from `/manuais` so `@name` can reach it |
 | `/use <name>` | switches the active session |
-| `/end [name]` | ends the session |
+| `/end [name]` | ends the session (says how many queued messages it dropped, if any) |
 | `/stop` | interrupts whatever the active session is doing |
 | `/retomar [name]` | redoes the request a restart killed mid-run |
 | `/descartar [name]` | forgets the request a restart killed mid-run |
@@ -98,6 +98,11 @@ file, not just held in memory. If the daemon dies mid-run — a deploy, a crash,
 a reboot — the next boot tells you which request never finished and offers
 `/retomar` to redo it or `/descartar` to forget it. Nothing is re-run on its
 own, because the dead run may already have had side effects.
+
+An ordinary message sent to that session before you answer is queued, not run
+— starting a fresh turn would overwrite the record of the one still waiting
+on you. It runs on its own right after `/retomar` (or stays queued for next
+time, if you `/descartar` instead).
 
 Example:
 
