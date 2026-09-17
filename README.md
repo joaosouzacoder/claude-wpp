@@ -208,13 +208,18 @@ doing.
 risk beyond that check.** Resuming one still works most of the time, but has
 been seen getting stuck in `blocked` in more than one way that this project
 cannot detect ahead of time or fix at the root — a `claude` behavior around
-reviving a fully dead session, not a bug here. If it happens, the bot says so
-once on WhatsApp (`claude attach <id>` shows what it is waiting on) and stays
-quiet after that instead of repeating "ainda trabalhando" — `blocked` never
-actually progresses, so there is nothing new to report. `/stop` clears it
-right away if you catch it; left alone, `blockedTimeoutMs` (20 minutes by
-default) cancels it on its own. Expect the occasional stuck turn from an old,
-already-finished session more than from a session that only went idle.
+reviving a fully dead session, not a bug here. `state: blocked` has even been
+seen sticking around for a turn that actually finished normally (a real
+answer already sitting in the transcript, Stop hooks already run) — the field
+itself just never flipped back. Every time it shows up, claude-wpp checks for
+a fresh reply first and delivers it immediately if there is one; only a
+genuine stall (no reply, still blocked next poll) gets the "parou esperando"
+notice on WhatsApp (`claude attach <id>` shows what it is waiting on), sent
+once and then left quiet instead of repeating "ainda trabalhando". `/stop`
+clears a real stall right away if you catch it; left alone, `blockedTimeoutMs`
+(20 minutes by default) cancels it on its own. Expect the occasional stuck
+turn from an old, already-finished session more than from a session that only
+went idle.
 
 You can watch or nudge an in-flight run yourself, the same way you would any
 other background agent on this host: `claude agents` lists it, `claude attach

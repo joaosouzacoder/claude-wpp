@@ -182,6 +182,28 @@ test('sem nenhuma resposta gravada, erro diz que não conseguiu ler', async () =
   assert.match(r.error, /não consegui ler a resposta/)
 })
 
+// Visto ao vivo em produção: uma sessão respondeu de verdade (Stop hooks
+// rodaram, resposta gravada no transcript) e `claude agents --json` continuou
+// dizendo `state: "blocked"` para sempre depois disso — o campo nunca voltou.
+// Sem checar a resposta antes de acreditar em `blocked`, essa resposta nunca
+// chegava no WhatsApp.
+test('estado diz blocked pra sempre, mas já tem resposta pronta: entrega em vez de esperar', async () => {
+  let avisos = 0
+  const { claude } = montar({
+    relogio: 1_000_000,
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', status: 'idle', state: 'blocked' }]) },
+    },
+    readReply: () => ({ content: 'Oi! Tô por aqui.', timestamp: new Date(2_000_000).toISOString() }),
+  })
+
+  const r = await claude.run({ ...base, onNotice: () => { avisos += 1 } })
+  assert.equal(r.ok, true)
+  assert.equal(r.text, 'Oi! Tô por aqui.')
+  assert.equal(avisos, 0, 'não devia nem avisar que travou, já que na verdade respondeu')
+})
+
 test('bloqueado avisa uma vez só e continua esperando até responder', async () => {
   let checagens = 0
   let avisos = 0
@@ -197,7 +219,9 @@ test('bloqueado avisa uma vez só e continua esperando até responder', async ()
         }
       },
     },
-    readReply: () => ({ content: 'liberou', timestamp: new Date(2_000_000).toISOString() }),
+    // Nada pronto ainda enquanto realmente travada — só depois que o estado
+    // vira 'done' de verdade é que existe uma resposta a ler.
+    readReply: () => (checagens >= 5 ? { content: 'liberou', timestamp: new Date(2_000_000).toISOString() } : null),
   })
 
   const r = await claude.run({ ...base, onNotice: () => { avisos += 1 } })
