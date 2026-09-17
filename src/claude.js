@@ -231,10 +231,21 @@ export function createClaude({
           quietas = 0
           bloqueado = false
         } else if (estado?.state === 'blocked') {
-          // Stuck waiting on something only a human can answer (a dialog our
-          // own flags did not cover) — a `claude` bug with no way out but
-          // /stop. Say so once, then stay quiet (the heartbeat above is
-          // gated on `bloqueado`) instead of repeating "ainda trabalhando"
+          // `state: blocked` has been observed sticking to a session even
+          // after its turn actually finished — Stop hooks run, a real answer
+          // sitting in the transcript, `claude attach` shows nothing wrong —
+          // the field itself just never flips back. Trusting it blindly would
+          // mean never reading an answer that is already sitting there, so
+          // check for one before treating this as genuinely stuck.
+          const resposta = await readReply({ cwd, sessionId: sessionIdCompleto })
+          if (resposta?.timestamp && Date.parse(resposta.timestamp) >= enviadoEm) {
+            return { ok: true, text: resposta.content, sessionId: sessionIdCompleto, error: null }
+          }
+
+          // Genuinely stuck waiting on something only a human can answer (a
+          // dialog our own flags did not cover) — a `claude` bug with no way
+          // out but /stop. Say so once, then stay quiet (the heartbeat above
+          // is gated on `bloqueado`) instead of repeating "ainda trabalhando"
           // for something that is not, in fact, progressing. Unlike a
           // legitimately long turn, this state does not get the no-ceiling
           // policy: past blockedTimeoutMs, nothing is coming back on its own.
