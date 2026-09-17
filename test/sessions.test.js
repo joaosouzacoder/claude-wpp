@@ -82,8 +82,16 @@ test('encerrar a ativa promove outra sessão', () => {
   const { sessions, dir } = novo()
   sessions.create({ cwd: dir, name: 'a' })
   sessions.create({ cwd: dir, name: 'b' })
-  assert.equal(sessions.end('b'), true)
+  assert.deepEqual(sessions.end('b'), { name: 'b', queueDropped: 0 })
   assert.equal(sessions.active().name, 'a')
+})
+
+test('encerrar avisa quantas mensagens da fila foram perdidas', () => {
+  const { sessions, dir } = novo()
+  sessions.create({ cwd: dir, name: 'a' })
+  sessions.enqueue('a', 'segunda')
+  sessions.enqueue('a', 'terceira')
+  assert.deepEqual(sessions.end('a'), { name: 'a', queueDropped: 2 })
 })
 
 test('encerrar a última sessão deixa a ativa nula', () => {

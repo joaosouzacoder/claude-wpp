@@ -46,6 +46,17 @@ export function aceitaDoBot(key, authorizedNumber) {
 
 export const aceitaTudo = () => true
 
+// A persistent failure (WhatsApp throttling this number, a sustained outage)
+// must not turn into hammering the endpoint every 3s forever — exponential
+// backoff with jitter, capped so it never goes past a minute between tries.
+const RECONNECT_BASE_MS = 3000
+const RECONNECT_MAX_MS = 60000
+
+export function atrasoReconexao(tentativas) {
+  const exponencial = Math.min(RECONNECT_BASE_MS * 2 ** tentativas, RECONNECT_MAX_MS)
+  return Math.round(exponencial * (0.8 + Math.random() * 0.4))
+}
+
 // Baileys writes creds.json the moment the auth folder is opened, long before
 // anyone scans the QR, so the file's existence proves nothing. `registered` is
 // no better: it is only ever initialised to false and belongs to the pairing-code
@@ -101,12 +112,32 @@ export function createWhatsapp({
 }) {
   let sock = null
   let estado = 'closed'
+  let tentativas = 0
 
   // Reconnecting replaces the socket, and with it the event emitter. Anything
   // waiting on connect() therefore cannot listen on a particular socket — it
   // would go deaf the moment the first one is dropped. The waiter lives here
   // instead, and every socket's handler settles it.
   let esperando = null
+
+  // The one thing that must never happen: a dropped connection with nothing
+  // left scheduled to bring it back. abrir() itself can throw before ever
+  // creating a socket (the auth-state read or the version fetch failing) —
+  // that used to just get logged, leaving the bot silently offline forever
+  // with the process still alive. Retrying here, on abrir() rejecting, is
+  // what actually closes that gap; the 'close' handler below is the other
+  // caller, for a socket that got created and then dropped.
+  function reconectar() {
+    tentativas += 1
+    const espera = atrasoReconexao(tentativas)
+    log.warn(`[${label}] reconectando em ${Math.round(espera / 1000)}s (tentativa ${tentativas})...`)
+    setTimeout(() => {
+      abrir().catch((e) => {
+        log.error(`[${label}] tentativa de reconexão falhou: ${e.message ?? e}`)
+        reconectar()
+      })
+    }, espera)
+  }
 
   function assentar(qual, arg) {
     if (!esperando) return
@@ -137,6 +168,7 @@ export function createWhatsapp({
 
       if (connection === 'open') {
         estado = 'open'
+        tentativas = 0
         log.info(`[${label}] conectado.`)
         assentar('resolve')
         if (onChats) sincronizarGrupos().catch((e) => log.warn?.(`[${label}] grupos: ${e.message}`))
@@ -145,19 +177,22 @@ export function createWhatsapp({
       if (connection === 'close') {
         estado = 'closed'
         const motivo = lastDisconnect?.error?.output?.statusCode
-        if (motivo === DisconnectReason.loggedOut) {
-          // Credentials are dead — the device was unlinked from the phone.
-          // Reconnecting would loop on 401, and whoever awaited connect() would
+        if (motivo === DisconnectReason.loggedOut || motivo === DisconnectReason.connectionReplaced) {
+          // Credentials are dead (unlinked from the phone) or this session was
+          // just taken over by another device linking the same account —
+          // reconnecting would only loop against a connection that keeps
+          // getting rejected or replaced, and whoever awaited connect() would
           // wait for an `open` that is never coming.
-          log.error(`[${label}] sessão encerrada no aparelho.`)
+          const motivoTexto = motivo === DisconnectReason.loggedOut ? 'encerrada no aparelho' : 'substituída por outro aparelho vinculado'
+          log.error(`[${label}] sessão ${motivoTexto}.`)
           assentar('reject', Object.assign(
-            new Error(`sessão do ${label} foi encerrada no aparelho`), { deslogado: true },
+            new Error(`sessão do ${label} foi ${motivoTexto}`), { deslogado: true },
           ))
           return
         }
         // 515 right after pairing is WhatsApp asking for a restart, not a fault.
-        log.warn(`[${label}] caiu (${motivo}). Reconectando em 3s...`)
-        setTimeout(() => { abrir().catch((e) => log.error(e.message ?? e)) }, 3000)
+        log.warn(`[${label}] caiu (${motivo}).`)
+        reconectar()
       }
     })
 

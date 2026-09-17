@@ -30,9 +30,11 @@ export function createOutbox({ db, now = () => Math.floor(Date.now() / 1000) }) 
       ORDER BY sent_at DESC, id DESC LIMIT 1
     `),
     decide: db.prepare('UPDATE outbox SET status = ?, decided_at = ? WHERE id = ? AND status = ?'),
-    reopen: db.prepare("UPDATE outbox SET status = 'pending', decided_at = NULL, reason = ? WHERE id = ?"),
-    sent: db.prepare("UPDATE outbox SET status = 'sent', sent_at = ?, sent_wa_id = ? WHERE id = ?"),
-    encerrar: db.prepare('UPDATE outbox SET status = ?, reason = ? WHERE id = ?'),
+    reopen: db.prepare("UPDATE outbox SET status = 'pending', decided_at = NULL, reason = ? WHERE id = ? AND status = ?"),
+    sending: db.prepare("UPDATE outbox SET status = 'sending' WHERE id = ? AND status = 'approved'"),
+    stuckSending: db.prepare("SELECT * FROM outbox WHERE status = 'sending' ORDER BY id"),
+    sent: db.prepare("UPDATE outbox SET status = 'sent', sent_at = ?, sent_wa_id = ? WHERE id = ? AND status = ?"),
+    encerrar: db.prepare('UPDATE outbox SET status = ?, reason = ? WHERE id = ? AND status = ?'),
     editar: db.prepare(`
       UPDATE outbox SET body = ?, status = 'pending', decided_at = NULL
       WHERE id = ? AND status IN ('pending', 'approved')
@@ -80,18 +82,43 @@ export function createOutbox({ db, now = () => Math.floor(Date.now() / 1000) }) 
       return changes > 0 ? stmt.get.get(id) : null
     },
 
-    reopen(id, motivo) {
-      stmt.reopen.run(motivo ?? null, id)
-      return stmt.get.get(id) ?? null
+    // Guarded the same way transicionar() guards approve/reject/cancel: only
+    // leaves the state it was read in. The scheduler reads a job as
+    // 'approved' and can spend real time (a Claude verification call, a
+    // WhatsApp send) before writing back — long enough for /no or /edit to
+    // land in between. Without this guard, that later write silently stamps
+    // over whatever the human just did to the row.
+    reopen(id, motivo, deEsperado = 'approved') {
+      const { changes } = stmt.reopen.run(motivo ?? null, id, deEsperado)
+      return changes > 0 ? stmt.get.get(id) : null
     },
 
-    markSent(id, waId) {
-      stmt.sent.run(now(), waId ?? null, id)
-      return stmt.get.get(id) ?? null
+    // Marks intent to send before the real, non-idempotent WhatsApp call
+    // happens, so a crash between "sent for real" and "recorded as sent"
+    // leaves a `sending` row behind instead of one that still reads
+    // `approved` and looks safe to send again.
+    markSending(id) {
+      const { changes } = stmt.sending.run(id)
+      return changes > 0 ? stmt.get.get(id) : null
+    },
+    stuckSending: () => stmt.stuckSending.all(),
+
+    markSent(id, waId, deEsperado = 'approved') {
+      const { changes } = stmt.sent.run(now(), waId ?? null, id, deEsperado)
+      return changes > 0 ? stmt.get.get(id) : null
     },
 
-    markFailed: (id, motivo) => (stmt.encerrar.run('failed', String(motivo ?? ''), id), stmt.get.get(id) ?? null),
-    markSkipped: (id, motivo) => (stmt.encerrar.run('skipped', String(motivo ?? ''), id), stmt.get.get(id) ?? null),
-    markDeleted: (id, motivo = null) => (stmt.encerrar.run('deleted', motivo, id), stmt.get.get(id) ?? null),
+    markFailed: (id, motivo, deEsperado = 'approved') => {
+      const { changes } = stmt.encerrar.run('failed', String(motivo ?? ''), id, deEsperado)
+      return changes > 0 ? stmt.get.get(id) : null
+    },
+    markSkipped: (id, motivo, deEsperado = 'approved') => {
+      const { changes } = stmt.encerrar.run('skipped', String(motivo ?? ''), id, deEsperado)
+      return changes > 0 ? stmt.get.get(id) : null
+    },
+    markDeleted: (id, motivo = null, deEsperado = 'sent') => {
+      const { changes } = stmt.encerrar.run('deleted', motivo, id, deEsperado)
+      return changes > 0 ? stmt.get.get(id) : null
+    },
   }
 }

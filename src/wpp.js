@@ -17,8 +17,13 @@ function nomeDo(job) {
 // The verifier answers in one line. Anything else is a refusal to decide, and a
 // refusal must never be read as permission — the caller turns this into a
 // question for the human.
+//
+// The verdict word must open its own line — not just appear anywhere with a
+// word boundary. Without that anchor, a stray mention earlier in the text
+// (e.g. "vou pular esse detalhe, mas ENVIAR mesmo assim") would be misread as
+// the verdict instead of the one actually meant.
 export function parseVeredito(texto) {
-  const casou = String(texto ?? '').match(/\b(enviar|pular)\b\s*[:\-—]?\s*(.*)/i)
+  const casou = String(texto ?? '').match(/^\s*(enviar|pular)\b\s*[:\-—]?\s*(.*)/im)
   if (!casou) throw new Error(`não entendi o veredito da verificação: ${String(texto ?? '').slice(0, 200)}`)
   return {
     send: casou[1].toLowerCase() === 'enviar',

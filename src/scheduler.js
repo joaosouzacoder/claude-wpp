@@ -59,15 +59,48 @@ export function createScheduler({
     return true
   }
 
+  // send() is a real, non-idempotent WhatsApp call — it cannot be undone by
+  // retrying, and nothing here may relabel a job as failed once it has run.
+  // Marking `sending` first means a crash between the real send and the
+  // write-back leaves a row a restart can flag for a human instead of one
+  // that still reads `approved` and looks safe to send again.
   async function despachar(job) {
+    if (!outbox.markSending(job.id)) return // /no or /edit raced us; not ours to send anymore
+
     const { ok, waId, error } = await send(job)
     if (!ok) {
-      outbox.markFailed(job.id, error ?? 'erro sem descrição')
+      if (!outbox.markFailed(job.id, error ?? 'erro sem descrição', 'sending')) {
+        await avisar(`[wpp] #${job.id} falhou ao mandar, mas o registro mudou de estado antes que eu conseguisse gravar isso — confira com /schedulers.`)
+        return
+      }
       await avisar(`[wpp] falhei ao mandar #${job.id} para ${comoChamar(job)}: ${error ?? 'erro sem descrição'}`)
       return
     }
-    outbox.markSent(job.id, waId)
+
+    try {
+      if (!outbox.markSent(job.id, waId, 'sending')) {
+        await avisar(`[wpp] mandei #${job.id} para ${comoChamar(job)}, mas não consegui marcar como enviada (o registro mudou de estado) — a mensagem SAIU, não manda de novo.`)
+        return
+      }
+    } catch (err) {
+      log.error?.(`#${job.id} foi enviada mas não consegui gravar isso: ${err.stack ?? err.message}`)
+      await avisar(`[wpp] mandei #${job.id} para ${comoChamar(job)}, mas não consegui salvar isso no banco (${err.message}) — a mensagem SAIU, não manda de novo.`)
+      return
+    }
     await avisar(`[wpp] mandei para ${comoChamar(job)}: "${job.body}"\n/undo desfaz.`)
+  }
+
+  // A `sending` row left behind means the process died between the real send
+  // and recording it — there is no way to know from here whether the message
+  // went out. Never guess: park it and ask.
+  async function reconciliarPendentes() {
+    for (const job of outbox.stuckSending()) {
+      outbox.reopen(job.id, 'reinício no meio do envio — confirme se chegou antes de aprovar de novo', 'sending')
+      await avisar(
+        `[wpp] #${job.id} estava sendo enviada quando eu reiniciei e não sei se chegou — confira a conversa com ${comoChamar(job)} antes de decidir.\n` +
+        `"${job.body}"\n/ok ${job.id} manda (de novo, se ainda não chegou) · /no ${job.id} descarta`,
+      )
+    }
   }
 
   async function tick() {
@@ -84,7 +117,15 @@ export function createScheduler({
           if (job.kind === 'conditional' && !(await verificar(job))) continue
           await despachar(job)
         } catch (err) {
-          outbox.markFailed(job.id, err.message ?? String(err))
+          // despachar() may have already moved this row to `sending` before
+          // throwing (e.g. send() itself threw instead of resolving
+          // {ok:false}). Try that state first so the guarded write still
+          // lands; falling back to `approved` covers a throw from earlier
+          // (verificar/atrasado). If neither matches, something external
+          // already decided this job's fate — leave it alone.
+          if (!outbox.markFailed(job.id, err.message ?? String(err), 'sending')) {
+            outbox.markFailed(job.id, err.message ?? String(err), 'approved')
+          }
           log.error?.(`falha no job ${job.id}: ${err.stack ?? err.message}`)
         }
       }
@@ -96,8 +137,10 @@ export function createScheduler({
   return {
     tick,
     start() {
+      const primeira = !timer
       timer ??= setInterval(() => { tick().catch((e) => log.error?.(e.message ?? e)) }, intervalMs)
       timer.unref?.()
+      if (primeira) reconciliarPendentes().catch((e) => log.error?.(e.message ?? e))
     },
     stop() {
       clearInterval(timer)

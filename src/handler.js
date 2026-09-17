@@ -116,7 +116,11 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
       if (r.sessionId) sessao.claudeSessionId = r.sessionId
       sessions.touch(sessao.name)
 
-      await responder(sessao.name, r.ok ? r.text : `Erro: ${r.error}`)
+      // A delivery failure here (WhatsApp send rejecting) must never strand
+      // whatever is already queued behind this turn — the run itself did
+      // finish, so the queue still has to drain, the same way onSlow/onNotice
+      // above already tolerate reply() failing.
+      await responder(sessao.name, r.ok ? r.text : `Erro: ${r.error}`).catch(() => {})
     } finally {
       sessao.busy = false
       sessao.abort = null
@@ -132,6 +136,15 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
       sessions.enqueue(sessao.name, prompt)
       return
     }
+    if (sessao.pending) {
+      // A crash-interrupted request is still waiting on /retomar or
+      // /descartar. beginRun() unconditionally overwrites `pending`, so
+      // starting a fresh turn now would silently erase that bookkeeping —
+      // queue this one instead of racing or clobbering it.
+      sessions.enqueue(sessao.name, prompt)
+      await reply(`[${sessao.name}] tem um pedido interrompido esperando você: manda /retomar ${sessao.name} ou /descartar ${sessao.name} primeiro. Guardei essa mensagem pra depois.`).catch(() => {})
+      return
+    }
     await executar(sessao, prompt)
   }
 
@@ -139,26 +152,30 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
   // process never produced one, so the next boot delivers it.
   async function recuperar() {
     for (const s of sessions.interrompidas()) {
-      const { prompt, startedAt } = s.pending
-      const quando = ociosidade(startedAt)
+      // One session's notice failing to deliver must not abort the loop and
+      // silently skip every other interrupted session behind it.
+      try {
+        const { prompt, startedAt } = s.pending
+        const quando = ociosidade(startedAt)
 
-      // The claude session runs detached from this process: the work may well
-      // have finished while nobody was listening. Hand that over instead of
-      // asking you to repeat a request that was already answered.
-      const ultima = await sessions.lastReply?.(s.name).catch(() => null)
-      if (ultima?.timestamp && Date.parse(ultima.timestamp) > Date.parse(startedAt)) {
-        sessions.endRun(s.name)
-        await responder(s.name, `(chegou enquanto eu reiniciava — é a última resposta da sessão)\n\n${ultima.content}`)
-        continue
-      }
+        // The claude session runs detached from this process: the work may well
+        // have finished while nobody was listening. Hand that over instead of
+        // asking you to repeat a request that was already answered.
+        const ultima = await sessions.lastReply?.(s.name).catch(() => null)
+        if (ultima?.timestamp && Date.parse(ultima.timestamp) > Date.parse(startedAt)) {
+          sessions.endRun(s.name)
+          await responder(s.name, `(chegou enquanto eu reiniciava — é a última resposta da sessão)\n\n${ultima.content}`)
+          continue
+        }
 
-      await reply([
-        `[${s.name}] Este pedido foi interrompido por um reinício ${quando === 'agora' ? 'agora há pouco' : `há ${quando}`} e nunca terminou:`,
-        '',
-        `"${prompt}"`,
-        '',
-        `Manda /retomar ${s.name} pra eu refazer, ou /descartar ${s.name} pra esquecer.`,
-      ].join('\n'))
+        await reply([
+          `[${s.name}] Este pedido foi interrompido por um reinício ${quando === 'agora' ? 'agora há pouco' : `há ${quando}`} e nunca terminou:`,
+          '',
+          `"${prompt}"`,
+          '',
+          `Manda /retomar ${s.name} pra eu refazer, ou /descartar ${s.name} pra esquecer.`,
+        ].join('\n'))
+      } catch {}
     }
   }
 
@@ -237,13 +254,20 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
     async end(args) {
       const nome = args[0] ?? sessions.active()?.name
       if (!nome) return reply('Não há sessão para encerrar.')
+      let resultado
       try {
-        if (!(await sessions.end(nome))) return reply(`Não achei a sessão ${nome}.`)
+        resultado = await sessions.end(nome)
+        if (!resultado) return reply(`Não achei a sessão ${nome}.`)
       } catch (err) {
         return reply(`Não deu: ${err.message}`)
       }
       const ativa = sessions.active()?.name
-      return reply(`Sessão [${nome}] encerrada.${ativa ? ` Ativa agora: [${ativa}].` : ''}`)
+      const fila = resultado.queueDropped
+        ? resultado.queueDropped > 1
+          ? ` ${resultado.queueDropped} mensagens na fila foram descartadas.`
+          : ' 1 mensagem na fila foi descartada.'
+        : ''
+      return reply(`Sessão [${nome}] encerrada.${fila}${ativa ? ` Ativa agora: [${ativa}].` : ''}`)
     },
 
     async stop() {

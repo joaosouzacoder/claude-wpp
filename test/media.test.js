@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, readFileSync, existsSync, writeFileSync, utimesSync } from 'node:fs'
 import { join, dirname, extname } from 'node:path'
 import { tmpdir } from 'node:os'
-import { saveMedia, promptComImagem } from '../src/media.js'
+import { saveMedia, promptComImagem, limparMediaAntiga } from '../src/media.js'
 
 function pastaTemp() {
   return mkdtempSync(join(tmpdir(), 'media-'))
@@ -76,4 +76,30 @@ test('promptComImagem usa um pedido padrão quando não há legenda', () => {
 
   assert.match(semLegenda, /^Analise a imagem anexada\./)
   assert.equal(soEspaco, semLegenda)
+})
+
+function comIdade(dir, nome, idadeMs, agora) {
+  const caminho = join(dir, nome)
+  writeFileSync(caminho, 'x')
+  const quando = (agora - idadeMs) / 1000
+  utimesSync(caminho, quando, quando)
+  return caminho
+}
+
+test('limparMediaAntiga remove só o que passou do teto de idade', () => {
+  const dir = pastaTemp()
+  const agora = Date.now()
+  const velho = comIdade(dir, 'velho.jpg', 40 * 24 * 60 * 60 * 1000, agora)
+  const novo = comIdade(dir, 'novo.jpg', 1 * 24 * 60 * 60 * 1000, agora)
+
+  const removidos = limparMediaAntiga({ dir, maxAgeMs: 30 * 24 * 60 * 60 * 1000, now: () => agora })
+
+  assert.equal(removidos, 1)
+  assert.ok(!existsSync(velho))
+  assert.ok(existsSync(novo))
+})
+
+test('limparMediaAntiga em pasta vazia ou inexistente não lança e devolve zero', () => {
+  assert.equal(limparMediaAntiga({ dir: pastaTemp(), maxAgeMs: 1000 }), 0)
+  assert.equal(limparMediaAntiga({ dir: join(pastaTemp(), 'nunca-existiu'), maxAgeMs: 1000 }), 0)
 })

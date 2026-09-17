@@ -237,6 +237,23 @@ test('/end encerra a sessão', async () => {
   assert.deepEqual(sessions.list(), [])
 })
 
+test('/end avisa quantas mensagens da fila foram descartadas', async () => {
+  let liberar
+  const espera = new Promise((r) => { liberar = r })
+  const { handler, sessions, ditos, dir } = montar({
+    run: async () => { await espera; return { ok: true, text: 'ok', sessionId: 'sid-1', error: null } },
+  })
+  await handler.handle(`/new ${dir} a`)
+  const emAndamento = handler.handle('primeira') // ocupa a sessão
+  await handler.handle('segunda') // vai pra fila
+  await handler.handle('terceira') // vai pra fila também
+  await handler.handle('/end a')
+  assert.match(ditos.at(-1), /2 mensagens na fila foram descartadas/)
+  liberar()
+  await emAndamento
+  assert.equal(sessions.get('a'), undefined)
+})
+
 test('/help responde os comandos', async () => {
   const { handler, ditos } = montar()
   await handler.handle('/help')
@@ -755,10 +772,71 @@ test('recuperar() avisa sobre o pedido que morreu no restart', async () => {
   assert.match(aviso, /\/retomar api/)
 })
 
+test('reply() falhando ao entregar a resposta final não trava a fila atrás dela', async () => {
+  let liberar
+  const espera = new Promise((r) => { liberar = r })
+  let chamadas = 0
+  const processados = []
+  const dir = mkdtempSync(join(tmpdir(), 'handler-'))
+  const sessions = createSessions({ store: createStore(join(dir, 'state.json')), defaultCwd: dir })
+  const reply = async () => {
+    chamadas += 1
+    if (chamadas === 1) throw new Error('whatsapp fora do ar')
+  }
+  const handler = createHandler({
+    sessions,
+    run: async ({ prompt }) => {
+      processados.push(prompt)
+      if (processados.length === 1) await espera
+      return { ok: true, text: 'ok', sessionId: 'sid-1', error: null }
+    },
+    transcribe: async () => ({ ok: true, text: '', error: null }),
+    reply,
+    config: { slowNoticeMs: 10, timeoutMs: 1000, maxMessageChars: 50, claudeBin: 'claude', defaultCwd: dir },
+  })
+
+  const primeira = handler.handle('primeira')
+  await new Promise((r) => setImmediate(r)) // deixa 'primeira' ocupar a sessão antes de mandar a próxima
+  const segunda = handler.handle('segunda') // enfileira, já que 'primeira' ainda está rodando
+  liberar()
+  await Promise.all([primeira, segunda])
+
+  assert.deepEqual(processados, ['primeira', 'segunda'], 'segunda roda mesmo com a entrega da resposta de primeira falhando')
+})
+
 test('recuperar() fica calado quando nada morreu no meio', async () => {
   const { handler, ditos, dir } = montar()
   await handler.recuperar()
   assert.deepEqual(ditos, [])
+})
+
+// A entrega de um aviso falhando (WhatsApp fora do ar, por exemplo) não pode
+// abortar o loop inteiro e deixar as outras sessões interrompidas sem aviso
+// nenhum.
+test('recuperar() segue avisando as outras sessões mesmo se uma entrega falhar', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'handler-'))
+  const sessions = createSessions({ store: createStore(join(dir, 'state.json')), defaultCwd: dir })
+  let chamadas = 0
+  const reply = async (t) => {
+    chamadas += 1
+    if (chamadas === 1) throw new Error('whatsapp fora do ar')
+    ditos.push(t)
+  }
+  const ditos = []
+  const handler = createHandler({
+    sessions,
+    run: async () => ({ ok: true, text: 'resposta', sessionId: 'sid-1', error: null }),
+    transcribe: async () => ({ ok: true, text: '', error: null }),
+    reply,
+    config: { slowNoticeMs: 10, timeoutMs: 1000, maxMessageChars: 50, claudeBin: 'claude', defaultCwd: dir },
+  })
+  sessions.create({ cwd: dir, name: 'a' })
+  sessions.beginRun('a', 'pedido de a')
+  sessions.create({ cwd: dir, name: 'b' })
+  sessions.beginRun('b', 'pedido de b')
+
+  await handler.recuperar()
+  assert.match(ditos.join('\n'), /pedido de b/, 'o aviso de b chegou mesmo com a primeira entrega (de a) falhando')
 })
 
 test('/retomar reexecuta o pedido interrompido', async () => {
@@ -781,6 +859,32 @@ test('/retomar sem nada interrompido avisa em vez de inventar', async () => {
   const { handler, ditos, dir } = montar()
   await handler.handle('/retomar')
   assert.match(ditos.at(-1), /nada/i)
+})
+
+// Reportado pela auditoria: uma mensagem comum enviada a uma sessão com um
+// pending sobrevivente de um restart não pode simplesmente sobrescrevê-lo —
+// beginRun() troca o pending incondicionalmente, então o pedido antigo
+// desapareceria sem rastro, sem o usuário nunca ter mandado /retomar ou
+// /descartar.
+test('mensagem comum não sobrescreve um pending sobrevivente de restart', async () => {
+  const enviados = []
+  const { handler, sessions, ditos, dir } = montar({
+    run: async ({ prompt }) => { enviados.push(prompt); return { ok: true, text: 'ok', sessionId: 'sid-1', error: null } },
+  })
+  sessions.create({ cwd: dir, name: 'api' })
+  sessions.beginRun('api', 'pedido antigo interrompido')
+
+  await handler.handle('@api mensagem nova')
+
+  assert.deepEqual(enviados, [], 'não deve ter rodado nada ainda')
+  assert.equal(sessions.get('api').pending.prompt, 'pedido antigo interrompido', 'o pending antigo continua intacto')
+  assert.deepEqual(sessions.get('api').queue, ['mensagem nova'], 'a mensagem nova foi guardada, não perdida')
+  assert.match(ditos.at(-1), /\/retomar api|\/descartar api/)
+
+  // Depois que /retomar resolve o pending antigo, a mensagem nova enfileirada
+  // é processada na sequência, sem precisar ser reenviada.
+  await handler.handle('/retomar api')
+  assert.deepEqual(enviados, ['pedido antigo interrompido', 'mensagem nova'])
 })
 
 test('/descartar joga fora o pedido interrompido', async () => {
