@@ -12,6 +12,10 @@ const DEFAULTS = {
   slowNoticeMs: 8000,
   heartbeatMs: 300000,
   timeoutMs: null,
+  // Unlike timeoutMs, this one has no null/unlimited mode: `blocked` is a
+  // known claude bug with no way out on its own, so waiting forever on it is
+  // never the right default (see the comment above BLOQUEIO_TIMEOUT_MS).
+  blockedTimeoutMs: 20 * 60 * 1000,
   maxMessageChars: 3500,
   openaiApiKey: null,
   transcribeModel: 'gpt-4o-transcribe',
