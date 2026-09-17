@@ -101,6 +101,7 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
         slowNoticeMs: config.slowNoticeMs,
         heartbeatMs: config.heartbeatMs,
         timeoutMs: config.timeoutMs,
+        blockedTimeoutMs: config.blockedTimeoutMs,
         appendSystemPrompt: FORMATO_WHATSAPP,
         signal: sessao.abort.signal,
         onSlow: (decorrido) => {

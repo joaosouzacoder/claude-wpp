@@ -12,6 +12,10 @@ const POLL_INTERVAL_MS = 2000
 // quiet look is not "it is over" — same reasoning `agent-deck` used to need
 // around its own tmux polling.
 const OLHADAS_QUIETAS = 3
+// `blocked` has no way out but /stop (see the comment on the busy-precheck
+// below) — without a ceiling, a session stuck this way repeats "ainda
+// trabalhando" forever instead of ever resolving.
+const BLOQUEIO_TIMEOUT_MS = 20 * 60 * 1000
 
 export function execCli(bin, args, { cwd, timeoutMs = DISPATCH_TIMEOUT_MS, signal } = {}) {
   return new Promise((resolve) => {
@@ -98,6 +102,7 @@ export function createClaude({
     slowNoticeMs = 8000,
     heartbeatMs = null,
     timeoutMs = null,
+    blockedTimeoutMs = BLOQUEIO_TIMEOUT_MS,
     appendSystemPrompt = null,
     onSlow,
     onNotice,
@@ -131,7 +136,10 @@ export function createClaude({
     const comecou = now()
     let finalizado = false
     let batida = null
-    const avisar = () => { if (!finalizado) onSlow?.(now() - comecou) }
+    // While blocked, onNotice below already says so — repeating "ainda
+    // trabalhando" on top of that would claim progress that is not happening.
+    let bloqueado = false
+    const avisar = () => { if (!finalizado && !bloqueado) onSlow?.(now() - comecou) }
     const timerLento = setTimeout(() => {
       avisar()
       if (heartbeatMs && !finalizado) batida = setInterval(avisar, heartbeatMs)
@@ -139,7 +147,7 @@ export function createClaude({
 
     let bgId = null
     let sessionIdCompleto = sessionId
-    let avisouBloqueio = false
+    let bloqueadoDesde = null
     const pararSessao = () => (bgId ? runCli(bin, ['stop', bgId], { timeoutMs: STOP_TIMEOUT_MS }).catch(() => {}) : null)
     const pararERemover = async (id) => {
       await runCli(bin, ['stop', id], { timeoutMs: STOP_TIMEOUT_MS }).catch(() => {})
@@ -221,21 +229,37 @@ export function createClaude({
 
         if (estado?.status === 'busy') {
           quietas = 0
+          bloqueado = false
         } else if (estado?.state === 'blocked') {
           // Stuck waiting on something only a human can answer (a dialog our
-          // own flags did not cover). Say so once and keep waiting — same
-          // no-ceiling policy as a legitimately long turn; /stop interrupts.
-          if (!avisouBloqueio) {
-            avisouBloqueio = true
-            onNotice?.(`parou esperando algo no claude — rode \`claude attach ${bgId}\` no host pra ver o quê. Sua mensagem já chegou.`)
+          // own flags did not cover) — a `claude` bug with no way out but
+          // /stop. Say so once, then stay quiet (the heartbeat above is
+          // gated on `bloqueado`) instead of repeating "ainda trabalhando"
+          // for something that is not, in fact, progressing. Unlike a
+          // legitimately long turn, this state does not get the no-ceiling
+          // policy: past blockedTimeoutMs, nothing is coming back on its own.
+          if (!bloqueado) {
+            bloqueado = true
+            bloqueadoDesde = now()
+            onNotice?.(`parou esperando algo no claude — rode \`claude attach ${bgId}\` no host pra ver o quê. Sua mensagem já chegou. Se não destravar sozinha, cancelo em ${Math.round(blockedTimeoutMs / 60000)}min.`)
+          } else if (now() - bloqueadoDesde > blockedTimeoutMs) {
+            await pararSessao()
+            return {
+              ok: false,
+              text: '',
+              sessionId: sessionIdCompleto,
+              error: `ficou travada (blocked) por mais de ${Math.round(blockedTimeoutMs / 60000)}min sem responder — cancelei sozinho. Manda de novo se quiser tentar outra vez.`,
+            }
           }
           quietas = 0
         } else if (falhaDaListagem) {
           // Same quiet-tolerance a merely-idle agent gets, not zero — a
           // failed status check earns the benefit of the doubt too.
+          bloqueado = false
           quietas += 1
           if (quietas >= OLHADAS_QUIETAS) break
         } else {
+          bloqueado = false
           quietas += 1
           if (!estado || quietas >= OLHADAS_QUIETAS) break
         }

@@ -83,14 +83,16 @@ video is read, as before.
 | `mediaDir` | `<stateDir>/media` | where received media is written |
 | `mediaMaxAgeMs` | `2592000000` (30 days) | media older than this is deleted on boot |
 | `heartbeatMs` | `300000` | how often a running job repeats that it is alive |
+| `blockedTimeoutMs` | `1200000` (20 min) | how long a `blocked` session is given before claude-wpp cancels it on its own |
 
 When something takes longer than 8 seconds, the bot replies `Trabalhando nisso.`
 and then repeats `Ainda trabalhando nisso (12min).` every `heartbeatMs` until
 the result arrives, so a long job and a stuck one stop looking alike.
 
-There is no time ceiling: a job that needs an hour gets an hour. The cost is
-that a stuck run holds its session until you send `/stop`, so nothing queued
-behind it moves. Set `timeoutMs` in milliseconds if you would rather have a cap. Every reply is prefixed with
+There is no time ceiling on an ordinary long job: one that needs an hour gets
+an hour. The cost is that a stuck run holds its session until you send
+`/stop`, so nothing queued behind it moves. Set `timeoutMs` in milliseconds if
+you would rather have a cap. Every reply is prefixed with
 `[session-name]`, because with parallel sessions they arrive out of order.
 
 ### A restart no longer eats your request
@@ -206,11 +208,13 @@ doing.
 risk beyond that check.** Resuming one still works most of the time, but has
 been seen getting stuck in `blocked` in more than one way that this project
 cannot detect ahead of time or fix at the root — a `claude` behavior around
-reviving a fully dead session, not a bug here. If it happens, the same guard
-that watches for a stuck turn (`OLHADAS_QUIETAS`) surfaces the notice on
-WhatsApp and `/stop` clears it within seconds — nothing is lost, but expect
-the occasional stuck turn from an old, already-finished session more than
-from a session that only went idle.
+reviving a fully dead session, not a bug here. If it happens, the bot says so
+once on WhatsApp (`claude attach <id>` shows what it is waiting on) and stays
+quiet after that instead of repeating "ainda trabalhando" — `blocked` never
+actually progresses, so there is nothing new to report. `/stop` clears it
+right away if you catch it; left alone, `blockedTimeoutMs` (20 minutes by
+default) cancels it on its own. Expect the occasional stuck turn from an old,
+already-finished session more than from a session that only went idle.
 
 You can watch or nudge an in-flight run yourself, the same way you would any
 other background agent on this host: `claude agents` lists it, `claude attach

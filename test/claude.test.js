@@ -6,7 +6,11 @@ const BG_OUT = (id, name) => `backgrounded · \x1b[36m${id}\x1b[39m${name ? ` ·
 
 // Answers each CLI call from a table keyed by the first argument(s), and
 // records every call so a test can check what run() actually asked for.
-function montar({ respostas = {}, relogio = 1_000_000, trust, readReply } = {}) {
+// sleepReal lets a test spend a sliver of *actual* wall-clock time per poll
+// (on top of the fake clock's own advance) so real setTimeout/setInterval
+// timers — slowNoticeMs, heartbeatMs — get a genuine chance to fire during
+// the test instead of racing the instantly-resolving fake sleep.
+function montar({ respostas = {}, relogio = 1_000_000, trust, readReply, sleepMs = 500, sleepReal = 0 } = {}) {
   const chamadas = []
   let agora = relogio
   const runCli = async (bin, args, opts = {}) => {
@@ -20,7 +24,10 @@ function montar({ respostas = {}, relogio = 1_000_000, trust, readReply } = {}) 
     runCli,
     trust: trust ?? (() => {}),
     readReply: readReply ?? (() => null),
-    sleep: async () => { agora += 500 },
+    sleep: async () => {
+      agora += sleepMs
+      if (sleepReal) await new Promise((r) => setTimeout(r, sleepReal))
+    },
     now: () => agora,
   })
   return { claude, chamadas, avancar: (ms) => { agora += ms } }
@@ -196,6 +203,42 @@ test('bloqueado avisa uma vez só e continua esperando até responder', async ()
   const r = await claude.run({ ...base, onNotice: () => { avisos += 1 } })
   assert.equal(r.ok, true)
   assert.equal(avisos, 1)
+})
+
+// blocked é um bug conhecido do claude, sem saída própria — sem teto, o
+// heartbeat original repetia "Ainda trabalhando nisso" a cada heartbeatMs pra
+// sempre (foi assim que uma sessão real ficou 6h mandando esse aviso). O
+// sleep aqui gasta um pouquinho de tempo real de propósito, pra dar chance
+// dos timers reais de slowNoticeMs/heartbeatMs disparar durante o teste.
+test('bloqueado nunca repete "ainda trabalhando" e cancela sozinho ao passar do teto', async () => {
+  let avisosSlow = 0
+  let avisosNotice = 0
+  const { claude, chamadas } = montar({
+    sleepMs: 5,
+    sleepReal: 5,
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', status: 'idle', state: 'blocked' }]) },
+    },
+  })
+
+  const r = await claude.run({
+    ...base,
+    slowNoticeMs: 10,
+    heartbeatMs: 10,
+    blockedTimeoutMs: 30,
+    onSlow: () => { avisosSlow += 1 },
+    onNotice: () => { avisosNotice += 1 },
+  })
+
+  assert.equal(r.ok, false)
+  assert.match(r.error, /blocked/)
+  assert.equal(avisosSlow, 0, 'a "ainda trabalhando" nunca deveria repetir enquanto travada')
+  assert.equal(avisosNotice, 1, 'o aviso de bloqueio ainda sai uma vez, como antes')
+  // >= 1, não exatamente 1: o cleanup de fim de run() (limparSessao) também
+  // chama stop+rm no mesmo bgId — o que importa aqui é que o cancelamento por
+  // teto disparou pararSessao() por conta própria, não só o cleanup padrão.
+  assert.ok(chamadas.filter((c) => c.args[0] === 'stop' && c.args[1] === 'abc12345').length >= 1, 'cancela a sessão travada sozinho')
 })
 
 test('a sessão some da lista antes de responder: erro, não trava', async () => {
