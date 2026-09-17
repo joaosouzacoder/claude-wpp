@@ -16,6 +16,11 @@ const OLHADAS_QUIETAS = 3
 // below) — without a ceiling, a session stuck this way repeats "ainda
 // trabalhando" forever instead of ever resolving.
 const BLOQUEIO_TIMEOUT_MS = 20 * 60 * 1000
+// Seen in production: claude agents already reports the session done (or it
+// vanished from the listing) before its transcript file is actually flushed
+// to disk, losing a real reply to that race. A couple of short retries costs
+// nothing on the common case, where the file is already there.
+const LEITURA_TENTATIVAS = 3
 
 export function execCli(bin, args, { cwd, timeoutMs = DISPATCH_TIMEOUT_MS, signal } = {}) {
   return new Promise((resolve) => {
@@ -277,7 +282,11 @@ export function createClaude({
         await sleep(POLL_INTERVAL_MS)
       }
 
-      const resposta = await readReply({ cwd, sessionId: sessionIdCompleto })
+      let resposta = await readReply({ cwd, sessionId: sessionIdCompleto })
+      for (let tentativa = 1; !resposta && tentativa < LEITURA_TENTATIVAS; tentativa += 1) {
+        await sleep(POLL_INTERVAL_MS)
+        resposta = await readReply({ cwd, sessionId: sessionIdCompleto })
+      }
       if (!resposta) return { ok: false, text: '', sessionId: sessionIdCompleto, error: `${name ?? bgId} respondeu, mas não consegui ler a resposta` }
       if (resposta.timestamp && Date.parse(resposta.timestamp) < enviadoEm) {
         return { ok: false, text: '', sessionId: sessionIdCompleto, error: `${name ?? bgId} recebeu, mas terminou sem responder em texto` }
