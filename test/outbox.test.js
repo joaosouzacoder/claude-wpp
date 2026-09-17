@@ -139,6 +139,48 @@ test('pulado pela verificação registra o porquê', () => {
   assert.equal(outbox.get(d.id).reason, 'ele confirmou ontem que traz')
 })
 
+test('markSending sai de approved, e devolve nulo se já não estava mais lá', () => {
+  const { outbox } = novo()
+  const d = outbox.create(rascunho())
+  assert.equal(outbox.markSending(d.id), null, 'ainda pending, não approved')
+  outbox.approve(d.id)
+  const r = outbox.markSending(d.id)
+  assert.equal(r.status, 'sending')
+  assert.equal(outbox.markSending(d.id), null, 'já não está mais approved')
+})
+
+test('sessão que morre em sending fica visível pra reconciliação depois', () => {
+  const { outbox } = novo()
+  const d = outbox.create(rascunho())
+  outbox.approve(d.id)
+  outbox.markSending(d.id)
+  assert.deepEqual(outbox.stuckSending().map((j) => j.id), [d.id])
+  assert.deepEqual(outbox.due(9999), [], 'sending não é due: nada tenta mandar de novo sozinho')
+  assert.deepEqual(outbox.pending(), [], 'nem aparece como pendente enquanto está em sending')
+})
+
+test('markSent/markFailed/markSkipped/reopen só valem a partir do estado esperado', () => {
+  const { outbox } = novo()
+  const d = outbox.create(rascunho())
+  outbox.approve(d.id)
+  // Simula uma corrida: /no chegou entre o scheduler ler a linha e escrever de volta.
+  outbox.cancel(d.id)
+  assert.equal(outbox.markSent(d.id, 'WA-1'), null)
+  assert.equal(outbox.markFailed(d.id, 'motivo'), null)
+  assert.equal(outbox.markSkipped(d.id, 'motivo'), null)
+  assert.equal(outbox.reopen(d.id, 'motivo'), null)
+  assert.equal(outbox.get(d.id).status, 'canceled', 'a linha continua exatamente como o /no deixou')
+})
+
+test('markDeleted só vale a partir de sent', () => {
+  const { outbox } = novo()
+  const d = outbox.create(rascunho())
+  outbox.approve(d.id)
+  assert.equal(outbox.markDeleted(d.id), null, 'ainda não foi enviada')
+  outbox.markSent(d.id, 'WA-1')
+  assert.equal(outbox.markDeleted(d.id).status, 'deleted')
+})
+
 test('atrasado demais volta a pendente em vez de disparar fora de hora', () => {
   const { outbox } = novo()
   const d = outbox.create(rascunho({ scheduledFor: 5000 }))

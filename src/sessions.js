@@ -95,14 +95,19 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
       return true
     },
 
+    // Discarding a busy session's queue in silence is exactly the invariant
+    // this file otherwise protects (see PERSISTIDO above): the caller gets
+    // the count back so it can say so instead of the prompts just vanishing.
     end(name) {
       const i = sessions.findIndex((s) => s.name === name)
       if (i === -1) return false
-      sessions[i].abort?.abort()
+      const sessao = sessions[i]
+      const queueDropped = sessao.queue.length
+      sessao.abort?.abort()
       sessions.splice(i, 1)
       if (activeSession === name) activeSession = sessions.at(-1)?.name ?? null
       persist()
-      return true
+      return { name, queueDropped }
     },
 
     beginRun(name, prompt) {
@@ -156,7 +161,7 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
     async lastReply(name) {
       const s = api.get(name)
       if (!s?.claudeSessionId) return null
-      return readLastReply({ cwd: s.cwd, sessionId: s.claudeSessionId })
+      return await readLastReply({ cwd: s.cwd, sessionId: s.claudeSessionId })
     },
   }
 

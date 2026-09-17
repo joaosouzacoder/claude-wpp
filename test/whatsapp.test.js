@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { classificar, aceitaDoBot, credenciaisValidas } from '../src/whatsapp.js'
+import { classificar, aceitaDoBot, credenciaisValidas, atrasoReconexao } from '../src/whatsapp.js'
 
 test('mensagem de texto simples continua sendo texto', () => {
   assert.deepEqual(classificar({ message: { conversation: 'oi claude' } }), {
@@ -88,6 +88,27 @@ test('o bot recusa quando só existe @lid, sem número real junto', () => {
 // ninguém pareou, cuspir QR no journal e morrer no timeout.
 
 const dirTemp = () => mkdtempSync(join(tmpdir(), 'auth-'))
+
+// A conexão persistentemente ruim (número marcado, saída prolongada) não pode
+// martelar o WhatsApp a cada 3s pra sempre.
+test('atrasoReconexao cresce exponencialmente e tem teto', () => {
+  const amostra = (tentativas, n = 50) => Array.from({ length: n }, () => atrasoReconexao(tentativas))
+
+  const t0 = amostra(0)
+  assert.ok(t0.every((ms) => ms >= 2400 && ms <= 3600), `tentativa 0 esperada ~3s, veio ${Math.min(...t0)}-${Math.max(...t0)}`)
+
+  const t1 = amostra(1)
+  assert.ok(t1.every((ms) => ms >= 4800 && ms <= 7200), `tentativa 1 esperada ~6s, veio ${Math.min(...t1)}-${Math.max(...t1)}`)
+
+  const t10 = amostra(10)
+  assert.ok(t10.every((ms) => ms <= 60000 * 1.2), 'nunca passa muito do teto de 60s')
+  assert.ok(t10.every((ms) => ms >= 60000 * 0.8), 'no teto, ainda tem jitter, não trava num valor fixo')
+})
+
+test('atrasoReconexao nunca devolve dois valores idênticos seguidos (tem jitter de verdade)', () => {
+  const valores = new Set(Array.from({ length: 20 }, () => atrasoReconexao(3)))
+  assert.ok(valores.size > 1, 'sem variação nenhuma entre chamadas, o jitter não está fazendo nada')
+})
 
 test('diretório que não existe não está pareado', () => {
   assert.equal(credenciaisValidas(join(tmpdir(), 'nao-existe-mesmo-123')), false)

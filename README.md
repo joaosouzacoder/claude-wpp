@@ -33,7 +33,7 @@ systemctl --user start claude-wpp
 | `/manuais` | lists claude sessions on this host the bot does not control |
 | `/importar <n> [name]` | adopts session `n` from `/manuais` so `@name` can reach it |
 | `/use <name>` | switches the active session |
-| `/end [name]` | ends the session |
+| `/end [name]` | ends the session (says how many queued messages it dropped, if any) |
 | `/stop` | interrupts whatever the active session is doing |
 | `/retomar [name]` | redoes the request a restart killed mid-run |
 | `/descartar [name]` | forgets the request a restart killed mid-run |
@@ -66,7 +66,8 @@ An image is written to `~/.local/state/claude-wpp/media/` and its path goes into
 the prompt; Claude reads the file with its own `Read` tool. The caption is the
 prompt, and `@session` in the caption routes it. Without a caption the bot asks
 Claude to analyse the image. Images are kept on disk so Claude can revisit them
-later in the session — prune that directory if it grows.
+later in the session — every boot removes anything older than `mediaMaxAgeMs`
+on its own, so growth is bounded automatically instead of needing a manual prune.
 
 Audio needs an OpenAI key, in `openaiApiKey` or in `OPENAI_API_KEY`. **This is
 the one part of the project that talks to a paid third-party API**, and it is
@@ -80,6 +81,7 @@ video is read, as before.
 | `transcribeModel` | `gpt-4o-transcribe` | transcription model |
 | `transcribeTimeoutMs` | `120000` | gives up on a transcription after this |
 | `mediaDir` | `<stateDir>/media` | where received media is written |
+| `mediaMaxAgeMs` | `2592000000` (30 days) | media older than this is deleted on boot |
 | `heartbeatMs` | `300000` | how often a running job repeats that it is alive |
 
 When something takes longer than 8 seconds, the bot replies `Trabalhando nisso.`
@@ -98,6 +100,11 @@ file, not just held in memory. If the daemon dies mid-run — a deploy, a crash,
 a reboot — the next boot tells you which request never finished and offers
 `/retomar` to redo it or `/descartar` to forget it. Nothing is re-run on its
 own, because the dead run may already have had side effects.
+
+An ordinary message sent to that session before you answer is queued, not run
+— starting a fresh turn would overwrite the record of the one still waiting
+on you. It runs on its own right after `/retomar` (or stays queued for next
+time, if you `/descartar` instead).
 
 Example:
 
@@ -281,6 +288,17 @@ Firing time is stored as an absolute instant, so it is right whatever the host's
 clock is set to. What `timezone` controls is the hour you are *shown* when
 approving — on a UTC host, without it, a 09:00 reminder is confirmed back to you
 as "12:00" and you would reject a draft that was correct.
+
+Sending is real and cannot be undone by retrying, so a job is marked `sending`
+the instant before the actual WhatsApp call — not after, and not folded into
+`approved`. That closes the one race that mattered: `/no` or `/edit` arriving
+while a conditional job's check is still running (a real Claude call, can take
+seconds) loses to nothing, because the job is still plainly `approved` for
+that whole wait and your command lands normally; once the send itself starts,
+nothing can relabel that row out from under it. A restart that catches a job
+mid-`sending` cannot know whether the message actually went out, so it never
+guesses either way: the job goes back to pending with a note asking you to
+check the conversation before approving it again.
 
 ### The log
 

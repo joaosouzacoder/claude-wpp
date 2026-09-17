@@ -34,6 +34,13 @@ test('não inventa veredito quando as duas palavras aparecem: vale a primeira', 
   assert.equal(parseVeredito('PULAR: ele respondeu, não precisa ENVIAR de novo').send, false)
 })
 
+test('palavra-armadilha no meio da frase não vira veredito', () => {
+  assert.throws(
+    () => parseVeredito('vou pular esse detalhe, mas ENVIAR mesmo assim'),
+    /não entendi/i,
+  )
+})
+
 // --- textos mostrados ---
 
 test('o rascunho mostra destino e texto exato antes de você aprovar', () => {

@@ -209,6 +209,41 @@ test('a sessão some da lista antes de responder: erro, não trava', async () =>
   assert.equal(r.ok, false)
 })
 
+// Uma falha isolada de `claude agents` (subprocesso, timeout, saída ruim) não
+// pode ser lida como "a sessão sumiu" — a sessão pode estar genuinamente
+// ocupada ainda. Ela ganha a mesma tolerância de 3 tentativas que uma sessão
+// idle já tinha, em vez de derrubar o turno na primeira falha.
+test('falha isolada em claude agents não derruba um turno que ainda está rodando', async () => {
+  let chamadas = 0
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: () => {
+        chamadas += 1
+        // Duas falhas de listagem, depois volta a funcionar e mostra idle.
+        if (chamadas <= 2) return { code: 1, stdout: '', stderr: 'agents indisponível' }
+        return { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', status: 'idle' }]) }
+      },
+    },
+    readReply: () => ({ content: 'sobrevivi às falhas', timestamp: new Date(2_000_000).toISOString() }),
+  })
+  const r = await claude.run({ ...base })
+  assert.equal(r.ok, true)
+  assert.equal(r.text, 'sobrevivi às falhas')
+  assert.ok(chamadas >= 3, `esperava pelo menos 3 chamadas a agents, veio ${chamadas}`)
+})
+
+test('falha persistente em claude agents eventualmente desiste, não trava para sempre', async () => {
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: { code: 1, stdout: '', stderr: 'agents sempre indisponível' },
+    },
+  })
+  const r = await claude.run({ ...base })
+  assert.equal(r.ok, false)
+})
+
 test('disparo com exit diferente de zero vira erro com o stderr', async () => {
   const { claude } = montar({
     respostas: { '--bg': { code: 1, stdout: '', stderr: 'algo deu errado' } },
