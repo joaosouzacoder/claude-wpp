@@ -182,6 +182,28 @@ test('sem nenhuma resposta gravada, erro diz que não conseguiu ler', async () =
   assert.match(r.error, /não consegui ler a resposta/)
 })
 
+// Visto em produção: claude agents já dava a sessão como terminada antes do
+// arquivo do transcript existir de fato no disco — a primeira leitura chegava
+// cedo demais e perdia uma resposta real.
+test('resposta demora a aparecer no disco: tenta de novo antes de desistir', async () => {
+  let tentativas = 0
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', status: 'idle' }]) },
+    },
+    readReply: () => {
+      tentativas += 1
+      return tentativas < 3 ? null : { content: 'cheguei atrasada', timestamp: new Date(2_000_000).toISOString() }
+    },
+  })
+
+  const r = await claude.run({ ...base })
+  assert.equal(r.ok, true)
+  assert.equal(r.text, 'cheguei atrasada')
+  assert.equal(tentativas, 3)
+})
+
 // Visto ao vivo em produção: uma sessão respondeu de verdade (Stop hooks
 // rodaram, resposta gravada no transcript) e `claude agents --json` continuou
 // dizendo `state: "blocked"` para sempre depois disso — o campo nunca voltou.
