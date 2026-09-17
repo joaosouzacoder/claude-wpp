@@ -88,6 +88,10 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
     let avisou = false
 
     try {
+      // run() rejecting outright (not resolving {ok:false, error}, which is
+      // its normal way of reporting a failure) must still land on the same
+      // path: otherwise the exception skips straight past the queue-drain
+      // continuation below, orphaning whatever is already queued behind it.
       const r = await run({
         bin: config.claudeBin,
         name: sessao.name,
@@ -107,7 +111,7 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
           reply(texto).catch(() => {})
         },
         onNotice: (texto) => { reply(`[${sessao.name}] ${texto}`).catch(() => {}) },
-      })
+      }).catch((err) => ({ ok: false, text: '', sessionId: null, error: err.message ?? String(err) }))
 
       if (r.sessionId) sessao.claudeSessionId = r.sessionId
       sessions.touch(sessao.name)

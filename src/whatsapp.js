@@ -90,6 +90,14 @@ export function createWhatsapp({
   onChats,
   label = 'WhatsApp',
   log = console,
+  // The four points where this module actually touches Baileys/the network.
+  // Overridable the same way claude.js's runCli or sessions.js's now() are,
+  // so a test can drive the connection/reconnect state machine and the
+  // message dispatch loop against a fake socket instead of a real one.
+  criarSocket = makeWASocket,
+  autenticar = useMultiFileAuthState,
+  buscarVersao = fetchLatestBaileysVersion,
+  baixarMidia = downloadMediaMessage,
 }) {
   let sock = null
   let estado = 'closed'
@@ -111,11 +119,11 @@ export function createWhatsapp({
 
   async function abrir() {
     mkdirSync(authDir, { recursive: true })
-    const { state, saveCreds } = await useMultiFileAuthState(authDir)
-    const { version } = await fetchLatestBaileysVersion()
+    const { state, saveCreds } = await autenticar(authDir)
+    const { version } = await buscarVersao()
 
     estado = 'connecting'
-    sock = makeWASocket({ version, auth: state, logger: loggerMudo, markOnlineOnConnect: false })
+    sock = criarSocket({ version, auth: state, logger: loggerMudo, markOnlineOnConnect: false })
 
     sock.ev.on('creds.update', saveCreds)
 
@@ -197,7 +205,7 @@ export function createWhatsapp({
 
           let media = null
           if (kind !== 'text') {
-            const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
+            const buffer = await baixarMidia(msg, 'buffer', {}, {
               logger: loggerMudo,
               reuploadRequest: sock.updateMediaMessage,
             })

@@ -3,78 +3,18 @@ import { loadConfig } from './config.js'
 import { createStore } from './store.js'
 import { createSessions } from './sessions.js'
 import { createHandler } from './handler.js'
-import { createWhatsapp, aceitaDoBot, aceitaTudo, credenciaisValidas } from './whatsapp.js'
+import { createWhatsapp, aceitaDoBot } from './whatsapp.js'
 import { createApi } from './api.js'
 import { runClaude, listAgents } from './claude.js'
 import { transcribe } from './transcribe.js'
-import { openDb } from './db.js'
-import { createCapture } from './capture.js'
-import { createOutbox } from './outbox.js'
-import { createScheduler } from './scheduler.js'
-import { createWpp, formatDraft } from './wpp.js'
+import { formatDraft } from './wpp.js'
+import { contaPessoalPareada, montarContaPessoal } from './boot.js'
 
 const log = {
   info: (m) => console.log(`[info] ${m}`),
   warn: (m) => console.warn(`[warn] ${m}`),
   error: (m) => console.error(`[erro] ${m}`),
   debug: (m) => { if (process.env.CLAUDE_WPP_DEBUG) console.log(`[debug] ${m}`) },
-}
-
-// The personal account only exists once it has been paired by hand. A QR printed
-// into the journal is a QR nobody can scan, so the daemon has to be sure before
-// it dials — see credenciaisValidas.
-function contaPessoalPareada(config) {
-  return Boolean(config.personalNumber) && credenciaisValidas(config.personalAuthDir)
-}
-
-function montarContaPessoal(config, avisar) {
-  const db = openDb(config.dbPath)
-  const capture = createCapture({ db })
-  const outbox = createOutbox({ db })
-
-  // Records and stays silent. There is no path from "a message arrived on my
-  // personal WhatsApp" to "Claude does something" — that is the whole point of
-  // "only when I ask".
-  const me = createWhatsapp({
-    authDir: config.personalAuthDir,
-    accept: aceitaTudo,
-    downloadMedia: false,
-    onMessage: ({ raw }) => { capture.record(raw) },
-    onHistory: (mensagens) => {
-      let n = 0
-      for (const m of mensagens) if (capture.record(m)) n += 1
-      if (n) log.info(`[pessoal] ${n} mensagem(ns) de histórico gravada(s).`)
-    },
-    onChats: (chats) => { for (const c of chats) capture.rememberChat(c) },
-    label: 'pessoal',
-    log,
-  })
-
-  const wpp = createWpp({
-    db,
-    outbox,
-    wa: me,
-    run: runClaude,
-    config: {
-      claudeBin: config.claudeBin,
-      agentCwd: config.agentCwd,
-      timeoutMs: config.timeoutMs,
-      timezone: config.timezone,
-    },
-  })
-
-  const scheduler = createScheduler({
-    outbox,
-    send: wpp.send,
-    decide: wpp.decide,
-    notify: avisar,
-    toleranceSec: config.scheduleToleranceSec,
-    timezone: config.timezone,
-    intervalMs: config.schedulerIntervalMs,
-    log,
-  })
-
-  return { db, me, outbox, wpp, scheduler }
 }
 
 async function main() {
@@ -105,7 +45,7 @@ async function main() {
   log.info(`${sessions.list().length} sessão(ões) recuperada(s) do estado.`)
   await whatsapp.connect()
 
-  let pessoal = contaPessoalPareada(config) ? montarContaPessoal(config, avisar) : null
+  let pessoal = contaPessoalPareada(config) ? montarContaPessoal(config, avisar, log) : null
   if (!pessoal && config.personalNumber) {
     log.warn('conta pessoal configurada mas não pareada — rode `npm run pair:me`.')
   }
