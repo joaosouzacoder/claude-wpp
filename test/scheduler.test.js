@@ -177,3 +177,47 @@ test('duas passadas simultâneas não mandam a mesma coisa duas vezes', async ()
 
   assert.deepEqual(enviadas, ['traz o macbook'])
 })
+
+test('um /no que chega enquanto a verificação condicional ainda está rodando vence o envio', async () => {
+  // A janela de corrida de verdade não é dentro de despachar() (markSending é
+  // síncrono, sem await entre ler due() e escrever "sending") — é durante o
+  // await real de decide(), que pode levar segundos. O job continua
+  // "approved" o tempo todo dessa espera, então um /no chega a tempo.
+  let liberar
+  const espera = new Promise((r) => { liberar = r })
+  const c = montar({
+    decide: async () => { await espera; return { send: true, reason: 'nada mudou' } },
+  })
+  const d = c.agendar({ kind: 'conditional', checkPrompt: 'já confirmou?' })
+  c.outbox.approve(d.id)
+
+  const rodando = c.scheduler.tick()
+  c.outbox.cancel(d.id)
+  liberar()
+  await rodando
+
+  assert.equal(c.outbox.get(d.id).status, 'canceled', 'a decisão do humano vence a escrita atrasada do scheduler')
+  assert.deepEqual(c.enviadas, [], 'nunca chega a mandar de verdade')
+})
+
+test('send() que lança em vez de devolver {ok:false} ainda marca failed, não fica pendurado em sending', async () => {
+  const c = montar({ send: async () => { throw new Error('boom') } })
+  const d = c.agendar()
+  c.outbox.approve(d.id)
+  await c.scheduler.tick()
+  assert.equal(c.outbox.get(d.id).status, 'failed')
+})
+
+test('reconciliação no boot pega job que ficou em sending (reinício no meio do envio) e devolve pra pendente', async () => {
+  const c = montar()
+  const d = c.agendar()
+  c.outbox.approve(d.id)
+  c.outbox.markSending(d.id)
+
+  c.scheduler.start()
+  c.scheduler.stop()
+  await new Promise((r) => setImmediate(r))
+
+  assert.equal(c.outbox.get(d.id).status, 'pending')
+  assert.match(c.avisos.join('\n'), /reiniciei|não sei se chegou/i)
+})
