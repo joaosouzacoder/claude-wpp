@@ -112,3 +112,54 @@ test('sem token no arquivo e sem token no ambiente, falha em vez de subir aberto
   const { apiToken, ...semToken } = MINIMO
   assert.throws(() => loadConfig({ path: fixture(semToken), env: {} }), /apiToken/)
 })
+
+// config.example.json é público e commitado — copiá-lo sem trocar o token
+// deixaria a API aberta sob um valor que qualquer um que já viu o repositório
+// conhece.
+test('recusa o token exatamente igual ao do config.example.json', () => {
+  assert.throws(
+    () => loadConfig({ path: fixture({ ...MINIMO, apiToken: 'troque-por-um-token-forte' }), env: {} }),
+    /exemplo/i,
+  )
+})
+
+test('um token parecido mas diferente do exemplo passa normalmente', () => {
+  const cfg = loadConfig({ path: fixture({ ...MINIMO, apiToken: 'troque-por-um-token-forte-de-verdade' }), env: {} })
+  assert.equal(cfg.apiToken, 'troque-por-um-token-forte-de-verdade')
+})
+
+test('campo numérico inválido no arquivo cai no padrão em vez de propagar lixo', () => {
+  const avisos = []
+  const log = { warn: (m) => avisos.push(m) }
+  const cfg = loadConfig({ path: fixture({ ...MINIMO, apiPort: 'oito mil' }), env: {}, log })
+  assert.equal(cfg.apiPort, 8787)
+  assert.match(avisos.join('\n'), /apiPort/)
+})
+
+test('timeoutMs nulo continua significando "sem teto", não é tratado como inválido', () => {
+  const avisos = []
+  const log = { warn: (m) => avisos.push(m) }
+  const cfg = loadConfig({ path: fixture({ ...MINIMO, timeoutMs: null }), env: {}, log })
+  assert.equal(cfg.timeoutMs, null)
+  assert.deepEqual(avisos, [])
+})
+
+test('timeoutMs com número de verdade continua funcionando', () => {
+  const cfg = loadConfig({ path: fixture({ ...MINIMO, timeoutMs: 5000 }), env: {} })
+  assert.equal(cfg.timeoutMs, 5000)
+})
+
+test('campos com default nulo mas não numéricos (apiToken, openaiApiKey, personalNumber) não são mexidos pela validação numérica', () => {
+  const cfg = loadConfig({ path: fixture({ ...MINIMO, openaiApiKey: 'sk-abc', personalNumber: '5511999999999' }), env: {} })
+  assert.equal(cfg.apiToken, 'abc')
+  assert.equal(cfg.openaiApiKey, 'sk-abc')
+  assert.equal(cfg.personalNumber, '5511999999999')
+})
+
+test('NaN vindo de uma env var também cai no padrão', () => {
+  const avisos = []
+  const log = { warn: (m) => avisos.push(m) }
+  const cfg = loadConfig({ path: fixture(MINIMO), env: { CLAUDE_WPP_API_PORT: 'nao-e-numero' }, log })
+  assert.equal(cfg.apiPort, 8787)
+  assert.match(avisos.join('\n'), /apiPort/)
+})

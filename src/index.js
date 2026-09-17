@@ -78,7 +78,7 @@ function montarContaPessoal(config, avisar) {
 }
 
 async function main() {
-  const config = loadConfig()
+  const config = loadConfig({ log })
   const sessions = createSessions({ store: createStore(join(config.stateDir, 'state.json')), defaultCwd: config.defaultCwd })
   const run = runClaude
 
