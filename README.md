@@ -282,6 +282,17 @@ clock is set to. What `timezone` controls is the hour you are *shown* when
 approving — on a UTC host, without it, a 09:00 reminder is confirmed back to you
 as "12:00" and you would reject a draft that was correct.
 
+Sending is real and cannot be undone by retrying, so a job is marked `sending`
+the instant before the actual WhatsApp call — not after, and not folded into
+`approved`. That closes the one race that mattered: `/no` or `/edit` arriving
+while a conditional job's check is still running (a real Claude call, can take
+seconds) loses to nothing, because the job is still plainly `approved` for
+that whole wait and your command lands normally; once the send itself starts,
+nothing can relabel that row out from under it. A restart that catches a job
+mid-`sending` cannot know whether the message actually went out, so it never
+guesses either way: the job goes back to pending with a note asking you to
+check the conversation before approving it again.
+
 ### The log
 
 `~/.local/state/claude-wpp/wpp.db`, two tables, queryable with plain SQL:
