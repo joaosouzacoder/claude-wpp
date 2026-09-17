@@ -18,7 +18,7 @@ test('transcriptPath troca cada caractere não alfanumérico do cwd por hífen',
   assert.equal(p, '/home/joao/.claude/projects/-home-joao--claude-proj/sid-1.jsonl')
 })
 
-test('devolve o último texto do assistente com o timestamp gravado', () => {
+test('devolve o último texto do assistente com o timestamp gravado', async () => {
   const home = ambiente()
   const dir = join(home, '.claude', 'projects', '-tmp-projeto')
   mkdirSync(dir, { recursive: true })
@@ -30,11 +30,11 @@ test('devolve o último texto do assistente com o timestamp gravado', () => {
     linha({ type: 'cost-state' }),
   ].join(''))
 
-  const r = readLastReply({ cwd: '/tmp/projeto', sessionId: 'sid-1', home })
+  const r = await readLastReply({ cwd: '/tmp/projeto', sessionId: 'sid-1', home })
   assert.deepEqual(r, { content: 'segunda', timestamp: '2026-01-01T10:00:05.000Z' })
 })
 
-test('junta múltiplos blocos de texto do mesmo turno', () => {
+test('junta múltiplos blocos de texto do mesmo turno', async () => {
   const home = ambiente()
   const dir = join(home, '.claude', 'projects', '-tmp-projeto')
   mkdirSync(dir, { recursive: true })
@@ -44,11 +44,11 @@ test('junta múltiplos blocos de texto do mesmo turno', () => {
     message: { content: [{ type: 'text', text: 'parte 1. ' }, { type: 'tool_use' }, { type: 'text', text: 'parte 2.' }] },
   }))
 
-  const r = readLastReply({ cwd: '/tmp/projeto', sessionId: 'sid-1', home })
+  const r = await readLastReply({ cwd: '/tmp/projeto', sessionId: 'sid-1', home })
   assert.equal(r.content, 'parte 1. parte 2.')
 })
 
-test('turno que só chamou ferramenta (sem texto) não conta como resposta', () => {
+test('turno que só chamou ferramenta (sem texto) não conta como resposta', async () => {
   const home = ambiente()
   const dir = join(home, '.claude', 'projects', '-tmp-projeto')
   mkdirSync(dir, { recursive: true })
@@ -57,21 +57,21 @@ test('turno que só chamou ferramenta (sem texto) não conta como resposta', () 
     linha({ type: 'assistant', timestamp: '2026-01-01T10:00:05.000Z', message: { content: [{ type: 'tool_use' }] } }),
   ].join(''))
 
-  const r = readLastReply({ cwd: '/tmp/projeto', sessionId: 'sid-1', home })
+  const r = await readLastReply({ cwd: '/tmp/projeto', sessionId: 'sid-1', home })
   assert.equal(r.content, 'anterior')
 })
 
-test('arquivo inexistente devolve null em vez de lançar', () => {
+test('arquivo inexistente devolve null em vez de lançar', async () => {
   const home = ambiente()
-  assert.equal(readLastReply({ cwd: '/nunca/existiu', sessionId: 'sid-1', home }), null)
+  assert.equal(await readLastReply({ cwd: '/nunca/existiu', sessionId: 'sid-1', home }), null)
 })
 
-test('sem sessionId ou cwd devolve null', () => {
-  assert.equal(readLastReply({ cwd: '/tmp/x', sessionId: null }), null)
-  assert.equal(readLastReply({ cwd: null, sessionId: 'sid-1' }), null)
+test('sem sessionId ou cwd devolve null', async () => {
+  assert.equal(await readLastReply({ cwd: '/tmp/x', sessionId: null }), null)
+  assert.equal(await readLastReply({ cwd: null, sessionId: 'sid-1' }), null)
 })
 
-test('linha corrompida no meio do arquivo não impede achar a resposta boa', () => {
+test('linha corrompida no meio do arquivo não impede achar a resposta boa', async () => {
   const home = ambiente()
   const dir = join(home, '.claude', 'projects', '-tmp-projeto')
   mkdirSync(dir, { recursive: true })
@@ -80,6 +80,6 @@ test('linha corrompida no meio do arquivo não impede achar a resposta boa', () 
     'isso não é json\n',
   ].join(''))
 
-  const r = readLastReply({ cwd: '/tmp/projeto', sessionId: 'sid-1', home })
+  const r = await readLastReply({ cwd: '/tmp/projeto', sessionId: 'sid-1', home })
   assert.equal(r.content, 'boa')
 })
