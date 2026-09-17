@@ -114,7 +114,13 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
         onNotice: (texto) => { reply(`[${sessao.name}] ${texto}`).catch(() => {}) },
       }).catch((err) => ({ ok: false, text: '', sessionId: null, error: err.message ?? String(err) }))
 
-      if (r.sessionId) sessao.claudeSessionId = r.sessionId
+      // sessionBroken means the id we tried to --resume is proven dead (claude
+      // reported it as a failed session, not just busy or blocked elsewhere) —
+      // keeping it would only make every future message repeat this same
+      // failure forever. Drop it so the next one starts a fresh conversation
+      // instead of resuming a target that can never come back.
+      if (r.sessionBroken) sessao.claudeSessionId = null
+      else if (r.sessionId) sessao.claudeSessionId = r.sessionId
       sessions.touch(sessao.name)
 
       // A delivery failure here (WhatsApp send rejecting) must never strand

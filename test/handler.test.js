@@ -66,6 +66,17 @@ test('grava o session_id devolvido pelo claude', async () => {
   assert.equal(sessions.active().claudeSessionId, 'sid-1')
 })
 
+// claude.js manda sessionBroken quando prova que o id que tentou --resume
+// está morto (claude devolveu state: failed) — guardar esse id de novo
+// faria toda mensagem seguinte repetir a mesma falha para sempre.
+test('sessionBroken limpa o session_id guardado em vez de gravar o morto de novo', async () => {
+  const { handler, sessions } = montar({
+    run: async () => ({ ok: false, text: '', sessionId: 'sid-morto', sessionBroken: true, error: 'a sessão falhou no claude (state: failed)' }),
+  })
+  await handler.handle('oi')
+  assert.equal(sessions.active().claudeSessionId, null)
+})
+
 test('reenvia o session_id na mensagem seguinte', async () => {
   const vistos = []
   const { handler } = montar({
