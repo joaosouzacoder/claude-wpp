@@ -20,6 +20,10 @@ const DEFAULTS = {
   timezone: 'America/Sao_Paulo',
   schedulerIntervalMs: 30000,
   scheduleToleranceSec: 3600,
+  // Images are kept on disk on purpose (README: Claude can revisit one from
+  // earlier in the conversation) and never deleted on their own otherwise —
+  // this is the automatic backstop against unbounded growth.
+  mediaMaxAgeMs: 30 * 24 * 60 * 60 * 1000,
 }
 
 const ENV_MAP = {

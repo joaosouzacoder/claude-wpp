@@ -66,7 +66,8 @@ An image is written to `~/.local/state/claude-wpp/media/` and its path goes into
 the prompt; Claude reads the file with its own `Read` tool. The caption is the
 prompt, and `@session` in the caption routes it. Without a caption the bot asks
 Claude to analyse the image. Images are kept on disk so Claude can revisit them
-later in the session — prune that directory if it grows.
+later in the session — every boot removes anything older than `mediaMaxAgeMs`
+on its own, so growth is bounded automatically instead of needing a manual prune.
 
 Audio needs an OpenAI key, in `openaiApiKey` or in `OPENAI_API_KEY`. **This is
 the one part of the project that talks to a paid third-party API**, and it is
@@ -80,6 +81,7 @@ video is read, as before.
 | `transcribeModel` | `gpt-4o-transcribe` | transcription model |
 | `transcribeTimeoutMs` | `120000` | gives up on a transcription after this |
 | `mediaDir` | `<stateDir>/media` | where received media is written |
+| `mediaMaxAgeMs` | `2592000000` (30 days) | media older than this is deleted on boot |
 | `heartbeatMs` | `300000` | how often a running job repeats that it is alive |
 
 When something takes longer than 8 seconds, the bot replies `Trabalhando nisso.`
