@@ -26,6 +26,11 @@ const DEFAULTS = {
   mediaMaxAgeMs: 30 * 24 * 60 * 60 * 1000,
 }
 
+// Must match config.example.json's apiToken verbatim: copying that file to
+// config.json without changing it would otherwise leave the API open under a
+// token that is public, committed, and identical on every install.
+const TOKEN_DE_EXEMPLO = 'troque-por-um-token-forte'
+
 const ENV_MAP = {
   CLAUDE_WPP_API_HOST: ['apiHost', String],
   CLAUDE_WPP_API_PORT: ['apiPort', Number],
@@ -41,7 +46,7 @@ const ENV_MAP = {
   OPENAI_API_KEY: ['openaiApiKey', String],
 }
 
-export function loadConfig({ path = join(homedir(), 'claude-wpp', 'config.json'), env = process.env } = {}) {
+export function loadConfig({ path = join(homedir(), 'claude-wpp', 'config.json'), env = process.env, log = console } = {}) {
   let file
   try {
     file = JSON.parse(readFileSync(path, 'utf8'))
@@ -57,6 +62,27 @@ export function loadConfig({ path = join(homedir(), 'claude-wpp', 'config.json')
 
   for (const campo of ['apiToken', 'authorizedNumber', 'botNumber']) {
     if (!cfg[campo]) throw new Error(`config inválido: ${campo} é obrigatório`)
+  }
+
+  if (cfg.apiToken === TOKEN_DE_EXEMPLO) {
+    throw new Error('config inválido: apiToken ainda é o valor de exemplo do config.example.json — troque por um token de verdade antes de subir o serviço.')
+  }
+
+  // Whatever JSON.parse produced going straight into things like setTimeout
+  // delays or SQL LIMIT counts is how a typo in config.json becomes a
+  // silent NaN somewhere at runtime instead of a clear failure at boot.
+  // DEFAULTS is the source of truth for which fields are numeric — several
+  // other fields (apiToken, openaiApiKey, personalNumber) also default to
+  // `null` without being numeric at all, so nullable-and-numeric needs its
+  // own explicit list instead of inferring it from the default alone.
+  const NUMERICOS_NULAVEIS = new Set(['timeoutMs'])
+  for (const [campo, padrao] of Object.entries(DEFAULTS)) {
+    const nulavel = NUMERICOS_NULAVEIS.has(campo)
+    if (typeof padrao !== 'number' && !nulavel) continue
+    if (nulavel && cfg[campo] == null) continue
+    if (typeof cfg[campo] === 'number' && Number.isFinite(cfg[campo])) continue
+    log?.warn?.(`[config] "${campo}" não é um número válido (${JSON.stringify(cfg[campo])}); usando o padrão ${JSON.stringify(padrao)}.`)
+    cfg[campo] = padrao
   }
 
   // Derived after the overrides, so they follow whoever moves the stateDir.

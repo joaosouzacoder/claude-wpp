@@ -377,7 +377,7 @@ daemon refuses to start without one rather than serving an open API.
 |---|---|---|
 | `apiHost` | `127.0.0.1` | address the API binds to |
 | `apiPort` | `8787` | port the API binds to |
-| `apiToken` | — | required; `WPP_TOKEN` in the environment overrides it |
+| `apiToken` | — | required; `WPP_TOKEN` in the environment overrides it; refuses the exact placeholder from `config.example.json` |
 
 ## Operation
 

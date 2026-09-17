@@ -79,7 +79,7 @@ function montarContaPessoal(config, avisar) {
 }
 
 async function main() {
-  const config = loadConfig()
+  const config = loadConfig({ log })
 
   const mediaRemovida = limparMediaAntiga({ dir: config.mediaDir, maxAgeMs: config.mediaMaxAgeMs })
   if (mediaRemovida) log.info(`${mediaRemovida} arquivo(s) de mídia antigo(s) removido(s) de ${config.mediaDir}.`)
