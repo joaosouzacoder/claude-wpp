@@ -12,6 +12,7 @@ import { createCapture } from './capture.js'
 import { createOutbox } from './outbox.js'
 import { createScheduler } from './scheduler.js'
 import { createWpp, formatDraft } from './wpp.js'
+import { limparMediaAntiga } from './media.js'
 
 const log = {
   info: (m) => console.log(`[info] ${m}`),
@@ -79,6 +80,10 @@ function montarContaPessoal(config, avisar) {
 
 async function main() {
   const config = loadConfig()
+
+  const mediaRemovida = limparMediaAntiga({ dir: config.mediaDir, maxAgeMs: config.mediaMaxAgeMs })
+  if (mediaRemovida) log.info(`${mediaRemovida} arquivo(s) de mídia antigo(s) removido(s) de ${config.mediaDir}.`)
+
   const sessions = createSessions({ store: createStore(join(config.stateDir, 'state.json')), defaultCwd: config.defaultCwd })
   const run = runClaude
 
@@ -94,7 +99,14 @@ async function main() {
     accept: (key) => aceitaDoBot(key, config.authorizedNumber),
     onMessage: (msg) => {
       if (!handler) return log.warn('mensagem chegou antes do handler subir; ignorada.')
-      return handler.handle(msg).catch((e) => log.error(e.stack ?? e.message))
+      // An unaccounted-for throw here used to only reach the server console —
+      // from the phone, that reads exactly like a dropped message, with no
+      // reason to retry or report it. A generic reply at least says something
+      // broke, on top of the same log line for whoever can actually fix it.
+      return handler.handle(msg).catch((e) => {
+        log.error(e.stack ?? e.message)
+        avisar('Deu um erro inesperado processando sua mensagem. Tenta de novo.').catch(() => {})
+      })
     },
     label: 'bot',
     log,
