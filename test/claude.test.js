@@ -226,6 +226,59 @@ test('estado diz blocked pra sempre, mas já tem resposta pronta: entrega em vez
   assert.equal(avisos, 0, 'não devia nem avisar que travou, já que na verdade respondeu')
 })
 
+// Visto ao vivo: um --resume cujo alvo o claude não achou reportou
+// state: "failed" — mas por baixo a sessão tinha rodado do zero e respondido
+// normalmente. A mesma checagem de blocked se aplica aqui.
+test('state failed também entrega se já tiver resposta pronta', async () => {
+  const { claude } = montar({
+    relogio: 1_000_000,
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', state: 'failed' }]) },
+    },
+    readReply: () => ({ content: 'Oi! Tudo certo.', timestamp: new Date(2_000_000).toISOString() }),
+  })
+
+  const r = await claude.run({ ...base, sessionId: 'sid-antigo' })
+  assert.equal(r.ok, true)
+  assert.equal(r.text, 'Oi! Tudo certo.')
+})
+
+test('state failed sem resposta nenhuma, resumindo sessão antiga: falha rápido e marca o id como morto', async () => {
+  let checagens = 0
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: () => { checagens += 1; return { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', state: 'failed' }]) } },
+    },
+    readReply: () => null,
+  })
+
+  const r = await claude.run({ ...base, sessionId: 'sid-antigo' })
+  assert.equal(r.ok, false)
+  assert.match(r.error, /failed/)
+  assert.equal(r.sessionBroken, true, 'o alvo do --resume está provadamente morto')
+  // 1 checagem do busy-precheck (por causa do --resume) + 1 do próprio loop de
+  // poll + 1 da varredura de órfãs no finally — não chega a esperar as três
+  // olhadas quietas de OLHADAS_QUIETAS, porque failed não se resolve sozinho
+  // como um "ainda ocupado" comum.
+  assert.equal(checagens, 3)
+})
+
+test('state failed numa sessão nova (sem --resume) não marca nada como morto: não havia id pra matar', async () => {
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-novo', state: 'failed' }]) },
+    },
+    readReply: () => null,
+  })
+
+  const r = await claude.run({ ...base })
+  assert.equal(r.ok, false)
+  assert.ok(!r.sessionBroken)
+})
+
 test('bloqueado avisa uma vez só e continua esperando até responder', async () => {
   let checagens = 0
   let avisos = 0

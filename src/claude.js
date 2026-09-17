@@ -268,6 +268,26 @@ export function createClaude({
             }
           }
           quietas = 0
+        } else if (estado?.state === 'failed') {
+          // Also seen misreporting a turn that actually completed with a real
+          // answer — same as `blocked`, check before believing it.
+          const resposta = await readReply({ cwd, sessionId: sessionIdCompleto })
+          if (resposta?.timestamp && Date.parse(resposta.timestamp) >= enviadoEm) {
+            return { ok: true, text: resposta.content, sessionId: sessionIdCompleto, error: null }
+          }
+
+          // Unlike `blocked`, nothing here is going to change on its own —
+          // most commonly a `--resume` whose target claude could not find.
+          // Fail fast instead of burning three quiet looks, and tell the
+          // caller the resumed id is dead so it stops retrying it forever:
+          // every future message would otherwise repeat this same failure.
+          return {
+            ok: false,
+            text: '',
+            sessionId: sessionIdCompleto,
+            sessionBroken: Boolean(sessionId),
+            error: `a sessão falhou no claude (state: failed)${sessionId ? ' — o histórico que eu tentei retomar pode não existir mais' : ''}. Manda de novo.`,
+          }
         } else if (falhaDaListagem) {
           // Same quiet-tolerance a merely-idle agent gets, not zero — a
           // failed status check earns the benefit of the doubt too.

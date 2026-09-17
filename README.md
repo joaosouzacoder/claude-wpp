@@ -221,6 +221,16 @@ clears a real stall right away if you catch it; left alone, `blockedTimeoutMs`
 turn from an old, already-finished session more than from a session that only
 went idle.
 
+`state: failed` gets the same fresh-reply check first — it too has been seen
+misreporting a turn that actually finished normally. Past that, it is treated
+as final rather than given `blockedTimeoutMs`'s benefit of the doubt: `failed`
+does not recover on its own the way `blocked` sometimes does, and it most
+commonly means the id claude-wpp tried to `--resume` no longer exists on
+claude's side. That id is dropped from the session right away so the *next*
+message starts a fresh conversation instead of repeating the same failure
+forever — the alternative to dropping it is a session that can never recover
+without `/end` and `/new` by hand.
+
 You can watch or nudge an in-flight run yourself, the same way you would any
 other background agent on this host: `claude agents` lists it, `claude attach
 <id>` opens it in a terminal, `claude logs <id>` prints its raw output.
