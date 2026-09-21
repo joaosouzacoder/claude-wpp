@@ -10,6 +10,7 @@ import { transcribe } from './transcribe.js'
 import { formatDraft } from './wpp.js'
 import { contaPessoalPareada, montarContaPessoal } from './boot.js'
 import { limparMediaAntiga } from './media.js'
+import { createNotifier } from './notify.js'
 
 const log = {
   info: (m) => console.log(`[info] ${m}`),
@@ -116,6 +117,7 @@ async function main() {
       ? (pedido) => { handler.handle(`/wpp ${pedido}`).catch((e) => log.error(e.stack ?? e.message)) }
       : null,
     personalState: pessoal ? () => pessoal.me.state() : null,
+    notifier: createNotifier({ send: avisar, dedupMs: config.notifyDedupMs }),
   })
 
   for (const sinal of ['SIGINT', 'SIGTERM']) {

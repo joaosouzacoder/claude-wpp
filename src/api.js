@@ -32,6 +32,7 @@ export function createApi({
   onDraft = null,
   onWpp = null,
   personalState = null,
+  notifier = null,
 }) {
   const json = (res, status, corpo) => {
     const texto = JSON.stringify(corpo)
@@ -109,6 +110,34 @@ export function createApi({
       // done. Holding the connection open for that would only ever time out.
       onWpp(pedido)
       return json(res, 202, { ok: true, queued: true })
+    }
+
+    // Always to the owner, unlike /send: an alert has exactly one reader, and
+    // the caller should not have to know or carry that number.
+    if (url.pathname === '/notify') {
+      if (req.method !== 'POST') return json(res, 405, { ok: false, error: 'método não permitido' })
+      if (!autorizado()) return json(res, 401, { ok: false, error: 'não autorizado' })
+      if (!notifier) return json(res, 503, { ok: false, error: 'notificações não configuradas' })
+
+      let corpo
+      try {
+        corpo = JSON.parse(await lerBody(req))
+      } catch {
+        return json(res, 400, { ok: false, error: 'json inválido' })
+      }
+
+      const text = typeof corpo?.text === 'string' ? corpo.text.trim() : ''
+      if (!text) return json(res, 400, { ok: false, error: 'text é obrigatório' })
+      const source = typeof corpo?.source === 'string' && corpo.source.trim() ? corpo.source.trim() : null
+      const key = typeof corpo?.key === 'string' && corpo.key ? corpo.key : null
+
+      let r
+      try {
+        r = await notifier.notify({ text, source, key })
+      } catch (err) {
+        return json(res, 502, { ok: false, error: err.message })
+      }
+      return json(res, 200, { ok: true, sent: r.sent, deduped: r.deduped })
     }
 
     if (url.pathname === '/send') {
