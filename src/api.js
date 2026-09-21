@@ -1,5 +1,7 @@
 import { createServer } from 'node:http'
 import { timingSafeEqual } from 'node:crypto'
+import { realpathSync, statSync } from 'node:fs'
+import { basename, sep } from 'node:path'
 import { mimetypeDe } from './mimetypes.js'
 import { pareceNumero } from './contacts.js'
 import { jidDe } from './whatsapp.js'
@@ -95,6 +97,26 @@ export function createApi({
     return { erro: [404, { ok: false, error: `não achei nenhum contato chamado "${to}"` }] }
   }
 
+  // A draft names a file by path, and the bot will read and send it. Only a
+  // file under the media directory — where /wpp and /send-file put what they
+  // were given — may be named: otherwise holding the token would be a way to
+  // mail any file on this host out, one /ok away. Resolved through symlinks.
+  const anexoDaPastaDeMidia = (anexo) => {
+    if (!mediaDir || typeof anexo?.path !== 'string') return null
+    let real
+    let base
+    try {
+      real = realpathSync(anexo.path)
+      base = realpathSync(mediaDir)
+      if (!statSync(real).isFile()) return null
+    } catch {
+      return null
+    }
+    if (!real.startsWith(base + sep)) return null
+    const name = nomeDeArquivoValido(anexo.name) ? anexo.name : basename(real)
+    return { path: real, name, mimetype: mimetypeDe(name) }
+  }
+
   // `confirm: true` on /send or /send-file: nothing goes out here. The message
   // becomes a draft, the owner sees it on WhatsApp, and decides there — /ok as
   // himself, /bot as the bot, /no to drop it.
@@ -145,9 +167,15 @@ export function createApi({
         return json(res, 400, { ok: false, error: 'json inválido' })
       }
 
+      let anexo = null
+      if (corpo?.attachment) {
+        anexo = anexoDaPastaDeMidia(corpo.attachment)
+        if (!anexo) return json(res, 400, { ok: false, error: 'anexo precisa ser um arquivo da pasta de mídia do claude-wpp' })
+      }
+
       let rascunho
       try {
-        rascunho = outbox.create(corpo ?? {})
+        rascunho = outbox.create({ ...(corpo ?? {}), attachment: anexo })
       } catch (err) {
         return json(res, 400, { ok: false, error: err.message })
       }
@@ -171,13 +199,26 @@ export function createApi({
 
       let corpo
       try {
-        corpo = JSON.parse(await lerBody(req))
-      } catch {
+        corpo = JSON.parse(await lerBody(req, LIMITE_BODY_ARQUIVO))
+      } catch (err) {
+        if (err instanceof BodyGrandeDemais) return json(res, 413, { ok: false, error: 'arquivo grande demais (máx. ~16 MB)' })
         return json(res, 400, { ok: false, error: 'json inválido' })
       }
 
-      const pedido = String(corpo?.request ?? '').trim()
+      let pedido = String(corpo?.request ?? '').trim()
       if (!pedido) return json(res, 400, { ok: false, error: 'request é obrigatório' })
+
+      // A file to go with the message: kept under the media directory, and
+      // the session is told where, so the draft it proposes carries it.
+      if (corpo.attachment) {
+        const { fileName, content } = corpo.attachment
+        if (!nomeDeArquivoValido(fileName)) return json(res, 400, { ok: false, error: 'attachment.fileName inválido: um nome de arquivo, sem caminho' })
+        const bytes = decodificarBase64(content)
+        if (!bytes) return json(res, 400, { ok: false, error: 'attachment.content tem que ser o arquivo em base64' })
+        if (!mediaDir) return json(res, 503, { ok: false, error: 'pasta de mídia não configurada' })
+        const caminho = saveMedia({ dir: mediaDir, buffer: bytes, mimetype: mimetypeDe(fileName), kind: 'document', fileName })
+        pedido += `\n\n[arquivo para anexar ao rascunho: "${fileName}" em ${caminho} — passe --attach '${caminho}' --attach-name '${fileName}' ao propose.mjs]`
+      }
 
       // A run takes as long as Claude takes, and reports on WhatsApp when it is
       // done. Holding the connection open for that would only ever time out.

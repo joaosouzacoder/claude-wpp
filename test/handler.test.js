@@ -625,7 +625,7 @@ test('sem chave da OpenAI o áudio avisa que falta a chave e o texto segue funci
 
 // --- conta pessoal (/wpp) ---
 
-function montarComWpp({ run, undo } = {}) {
+function montarComWpp({ run, undo, formalizar = async ({ texto }) => `Prezada, ${texto}.` } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'handler-wpp-'))
   const db = openDb(':memory:')
   const outbox = createOutbox({ db, now: () => 1000 })
@@ -643,6 +643,7 @@ function montarComWpp({ run, undo } = {}) {
       agentCwd: dir,
       tick: async () => { passadas.push(1) },
       undo: undo ?? (async () => ({ ok: true, job: { chat_name: 'Jane', body: 'traz o macbook' } })),
+      formalizar,
     },
   })
 
@@ -671,14 +672,45 @@ test('/ok aprova e faz a mensagem sair na hora', async () => {
   assert.match(ditos.at(-1), /aprovad.*como você/i)
 })
 
-test('/bot aprova o mesmo rascunho para sair pelo bot', async () => {
+test('/bot num rascunho sem versão formal formaliza antes e aprova com ela', async () => {
   const { handler, outbox, ditos, passadas, rascunho } = montarComWpp()
   const d = rascunho()
   await handler.handle(`/bot ${d.id}`)
-  assert.equal(outbox.get(d.id).status, 'approved')
-  assert.equal(outbox.get(d.id).sender, 'bot')
+  const depois = outbox.get(d.id)
+  assert.equal(depois.status, 'approved')
+  assert.equal(depois.sender, 'bot')
+  assert.equal(depois.body_bot, 'Prezada, traz o macbook.')
+  assert.equal(depois.body, 'traz o macbook', 'a versão "como você" continua intacta')
   assert.equal(passadas.length, 1)
   assert.match(ditos.at(-1), /pelo bot/)
+  assert.match(ditos.at(-1), /Prezada, traz o macbook\./)
+})
+
+test('/bot com versão formal já pronta não chama o formalizador', async () => {
+  let chamou = false
+  const { handler, outbox, rascunho } = montarComWpp({ formalizar: async () => { chamou = true; return 'x' } })
+  const d = rascunho({ bodyBot: 'Olá, Jane. Por favor, traga o MacBook.' })
+  await handler.handle(`/bot ${d.id}`)
+  assert.equal(chamou, false)
+  assert.equal(outbox.get(d.id).body_bot, 'Olá, Jane. Por favor, traga o MacBook.')
+})
+
+test('/bot não aprova nada se a formalização falhar: nunca sai informal pelo bot', async () => {
+  const { handler, outbox, ditos, passadas, rascunho } = montarComWpp({ formalizar: async () => { throw new Error('claude fora') } })
+  const d = rascunho()
+  await handler.handle(`/bot ${d.id}`)
+  assert.equal(outbox.get(d.id).status, 'pending')
+  assert.equal(passadas.length, 0)
+  assert.match(ditos.at(-1), /nada foi enviado/)
+})
+
+test('/edit apaga a versão formal antiga: o /bot refaz a partir do texto novo', async () => {
+  const { handler, outbox, rascunho } = montarComWpp()
+  const d = rascunho({ bodyBot: 'Olá, Jane. Traga o MacBook.' })
+  await handler.handle(`/edit ${d.id} traz o carregador`)
+  assert.equal(outbox.get(d.id).body_bot, null)
+  await handler.handle(`/bot ${d.id}`)
+  assert.equal(outbox.get(d.id).body_bot, 'Prezada, traz o carregador.')
 })
 
 test('/bot depois de /ok não troca a decisão já tomada', async () => {

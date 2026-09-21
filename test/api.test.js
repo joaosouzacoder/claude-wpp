@@ -6,7 +6,7 @@ import { createOutbox } from '../src/outbox.js'
 import { createNotifier } from '../src/notify.js'
 import { createCapture } from '../src/capture.js'
 import { createContactResolver } from '../src/contacts.js'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, symlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -525,4 +525,67 @@ test('nome sem conta pessoal configurada explica que precisa do número', async 
   })
   assert.equal(r.status, 400)
   assert.match((await r.json()).error, /conta pessoal/)
+})
+
+async function subirParaCompor() {
+  const dir = mkdtempSync(join(tmpdir(), 'api-compor-'))
+  const mediaDir = join(dir, 'media')
+  mkdirSync(mediaDir, { recursive: true })
+  const db = openDb(join(dir, 'wpp.db'))
+  const outboxReal = createOutbox({ db })
+  const pedidos = []
+  const servidor = createApi({ host: '127.0.0.1', port: 0, token: 'segredo', whatsapp, outbox: outboxReal, onWpp: (p) => { pedidos.push(p) }, mediaDir })
+  const url = `http://127.0.0.1:${await servidor.listen()}`
+  const post = (rota, corpo) => fetch(`${url}${rota}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer segredo' }, body: JSON.stringify(corpo) })
+  return { servidor, post, outboxReal, pedidos, dir, mediaDir }
+}
+
+test('outbox guarda as duas versões do texto', async () => {
+  const { servidor, post, outboxReal } = await subirParaCompor()
+  const r = await post('/outbox', { chatJid: '5511911111111@s.whatsapp.net', body: 'fala ju', bodyBot: 'Olá, Juliano.' })
+  const d = outboxReal.get((await r.json()).id)
+  assert.equal(d.body, 'fala ju')
+  assert.equal(d.body_bot, 'Olá, Juliano.')
+  await servidor.close()
+})
+
+test('outbox só aceita anexo de dentro da pasta de mídia, nem por symlink escapa', async () => {
+  const { servidor, post, outboxReal, dir, mediaDir } = await subirParaCompor()
+  const fora = join(dir, 'segredo.txt')
+  writeFileSync(fora, 'não pode sair')
+  symlinkSync(fora, join(mediaDir, 'atalho.txt'))
+  const dentro = join(mediaDir, '123-handoff.md')
+  writeFileSync(dentro, '# ok')
+  const base = { chatJid: '5511911111111@s.whatsapp.net', body: 'segue', bodyBot: 'Segue.' }
+  for (const path of [fora, join(mediaDir, 'atalho.txt'), join(mediaDir, '..', 'segredo.txt'), '/etc/passwd', join(mediaDir, 'nao-existe')]) {
+    const r = await post('/outbox', { ...base, attachment: { path, name: 'x.txt' } })
+    assert.equal(r.status, 400, path)
+  }
+  const ok = await post('/outbox', { ...base, attachment: { path: dentro, name: 'handoff.md' } })
+  assert.equal(ok.status, 200)
+  const d = outboxReal.get((await ok.json()).id)
+  assert.equal(d.attachment_name, 'handoff.md')
+  assert.equal(d.attachment_mimetype, 'text/markdown')
+  await servidor.close()
+})
+
+test('wpp com arquivo guarda o arquivo e diz ao agente como anexar', async () => {
+  const { servidor, post, pedidos, mediaDir } = await subirParaCompor()
+  const r = await post('/wpp', { request: 'manda o handoff pro Fulano', attachment: { fileName: 'handoff.md', content: Buffer.from('# oi').toString('base64') } })
+  assert.equal(r.status, 202)
+  assert.equal(pedidos.length, 1)
+  assert.match(pedidos[0], /^manda o handoff pro Fulano/)
+  const caminho = pedidos[0].match(/--attach '([^']+)'/)[1]
+  assert.ok(caminho.startsWith(mediaDir))
+  assert.equal(readFileSync(caminho, 'utf8'), '# oi')
+  assert.match(pedidos[0], /--attach-name 'handoff\.md'/)
+  await servidor.close()
+})
+
+test('wpp com anexo inválido é 400 e não chega ao agente', async () => {
+  const { servidor, post, pedidos } = await subirParaCompor()
+  assert.equal((await post('/wpp', { request: 'x', attachment: { fileName: '../a', content: 'b2k=' } })).status, 400)
+  assert.equal((await post('/wpp', { request: 'x', attachment: { fileName: 'a.txt', content: 'lixo!' } })).status, 400)
+  assert.equal(pedidos.length, 0)
+  await servidor.close()
 })

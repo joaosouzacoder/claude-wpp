@@ -36,17 +36,30 @@ export function comoQuem(job) {
   return job.sender === 'bot' ? 'pelo bot' : 'como você'
 }
 
+// The words that actually go out: through the bot, the formal version.
+export function textoDe(job) {
+  return job.sender === 'bot' ? (job.body_bot ?? job.body) : job.body
+}
+
 function conteudoDo(job) {
   const anexo = job.attachment_name ? `📎 ${job.attachment_name}` : null
-  if (anexo && !job.body) return anexo
-  return anexo ? `${anexo} — "${job.body}"` : `"${job.body}"`
+  const texto = textoDe(job)
+  if (anexo && !texto) return anexo
+  return anexo ? `${anexo} — "${texto}"` : `"${texto}"`
 }
 
 export function formatDraft(job, timezone) {
   const linhas = [`[wpp] rascunho #${job.id} → ${nomeDo(job)}`]
   if (job.scheduled_for) linhas.push(`sai em ${quando(job.scheduled_for, timezone)}`)
   if (job.kind === 'conditional') linhas.push(`antes de mandar, verifica: ${job.check_prompt}`)
-  linhas.push('', conteudoDo(job), '', `/ok ${job.id} manda como você · /bot ${job.id} manda pelo bot · /no ${job.id} descarta`)
+  if (job.attachment_name) linhas.push(`📎 ${job.attachment_name}`)
+  const aspas = (t) => (t ? `"${t}"` : '(sem texto)')
+  if (job.body_bot) {
+    linhas.push('', `/ok ${job.id} — como você:`, aspas(job.body), '', `/bot ${job.id} — pelo bot:`, aspas(job.body_bot))
+  } else {
+    linhas.push('', aspas(job.body), '', `/ok ${job.id} manda como você · /bot ${job.id} formaliza e manda pelo bot`)
+  }
+  linhas.push('', `/no ${job.id} descarta`)
   return linhas.join('\n')
 }
 
@@ -88,7 +101,7 @@ export function createWpp({ db, outbox, wa, bot = null, run, config, now = () =>
         const waId = await conta.sendDocument(job.chat_jid, {
           content: readFileSync(job.attachment_path),
           fileName: job.attachment_name,
-          caption: job.body || undefined,
+          caption: textoDe(job) || undefined,
           mimetype: job.attachment_mimetype ?? 'application/octet-stream',
         })
         return { ok: true, waId }
@@ -96,7 +109,7 @@ export function createWpp({ db, outbox, wa, bot = null, run, config, now = () =>
       // A quote points at a message in the owner's own history, which the
       // bot's account cannot reference.
       const citada = job.quoted_wa_id && job.sender !== 'bot' ? buscarCitada.get(job.chat_jid, job.quoted_wa_id) : null
-      const waId = await conta.sendText(job.chat_jid, job.body, { quoted: citacaoDe(citada) })
+      const waId = await conta.sendText(job.chat_jid, textoDe(job), { quoted: citacaoDe(citada) })
       return { ok: true, waId }
     } catch (err) {
       return { ok: false, error: err.message ?? String(err) }

@@ -41,7 +41,7 @@ systemctl --user start claude-wpp
 | `/help` | lists the commands |
 | `/wpp <request>` | reads your own WhatsApp and prepares a message (see below) |
 | `/ok <n>` | approves draft `n` and sends it **as you**, from your own account — the only way anything gets sent |
-| `/bot <n>` | approves draft `n` and sends it from the **bot's** number instead |
+| `/bot <n>` | approves draft `n` and sends its **formal** version from the **bot's** number instead |
 | `/edit <n> <text>` | rewrites draft `n`; it needs `/ok` again |
 | `/no <n>` | discards a draft or cancels a schedule |
 | `/schedulers` | what is waiting for your approval and what is scheduled |
@@ -319,6 +319,18 @@ long as WhatsApp still allows deleting it for everyone.
 If the wording is not yours, `/edit 3 the text you actually want` replaces it.
 An edit always returns the draft to `pending`, including one you had already
 approved — otherwise words nobody agreed to could go out under an old approval.
+
+Every draft Claude proposes carries **two wordings**: yours, the way you write
+to that person, which `/ok` sends from your account; and a formal one, which
+`/bot` sends from the bot's number — through the bot it is always formal. The
+preview shows each next to its command. A draft without a formal version (an
+older one, or one you `/edit`ed — the edit discards the formal text written
+from the old words) is rewritten formally at the moment you send `/bot`; if
+that rewrite fails, nothing is approved.
+
+`POST /wpp` also takes a file (`"attachment": {"fileName", "content"}`, base64):
+it is kept under the media directory and Claude attaches it to the draft.
+Drafts can only carry files from that directory.
 
 ### Scheduling
 

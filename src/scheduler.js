@@ -2,7 +2,7 @@
 // the authorized number beforehand — a conditional job only gets a vote on
 // *whether* to send, never on *what* to send.
 
-import { quando, comoQuem } from './wpp.js'
+import { quando, comoQuem, textoDe } from './wpp.js'
 
 const UMA_HORA = 3600
 
@@ -87,7 +87,7 @@ export function createScheduler({
       await avisar(`[wpp] mandei #${job.id} para ${comoChamar(job)}, mas não consegui salvar isso no banco (${err.message}) — a mensagem SAIU, não manda de novo.`)
       return
     }
-    const oque = job.attachment_name ? `📎 ${job.attachment_name}` : `"${job.body}"`
+    const oque = job.attachment_name ? `📎 ${job.attachment_name}` : `"${textoDe(job)}"`
     await avisar(`[wpp] mandei ${comoQuem(job)} para ${comoChamar(job)}: ${oque}\n/undo desfaz.`)
   }
 

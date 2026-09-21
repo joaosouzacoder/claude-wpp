@@ -514,11 +514,31 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
     const id = numeroDoRascunho(args[0])
     if (!id) return reply(`Uso: ${comando} <número do rascunho>`)
 
+    // Through the bot it is always formal. A draft that came without a formal
+    // version gets one now, before it is approved — if that fails, it is not
+    // approved at all rather than going out in the owner's casual voice.
+    if (remetente === 'bot') {
+      const atual = wpp.outbox.get(id)
+      if (atual?.status === 'pending' && !atual.body_bot && atual.body?.trim()) {
+        if (!wpp.formalizar) return reply(`Não consigo formalizar #${id} agora — use /ok ou /edit.`)
+        await reply(`Formalizando #${id} antes de mandar pelo bot…`)
+        let formal
+        try {
+          formal = await wpp.formalizar({ nome: atual.chat_name, texto: atual.body })
+        } catch (err) {
+          return reply(`Não consegui formalizar #${id} (${err.message}) — nada foi enviado.`)
+        }
+        if (!formal) return reply(`A versão formal de #${id} veio vazia — nada foi enviado.`)
+        wpp.outbox.setBodyBot(id, formal)
+      }
+    }
+
     const job = wpp.outbox.approve(id, remetente)
     if (!job) return reply(`Não achei rascunho pendente #${id}. Manda /schedulers.`)
 
     const como = remetente === 'bot' ? 'pelo bot' : 'como você'
-    await reply(job.scheduled_for ? `Aprovado ${como}. #${id} sai na hora marcada.` : `Aprovado, mandando #${id} ${como}.`)
+    const texto = remetente === 'bot' && job.body_bot ? `\n\n"${job.body_bot}"` : ''
+    await reply(job.scheduled_for ? `Aprovado ${como}. #${id} sai na hora marcada.${texto}` : `Aprovado, mandando #${id} ${como}.${texto}`)
     return wpp.tick()
   }
 

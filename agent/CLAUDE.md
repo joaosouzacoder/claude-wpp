@@ -31,7 +31,7 @@ decide.
 ```bash
 node q.mjs "select ..."                 # read the message log (read-only)
 node q.mjs --json "select ..."          # same, as JSON
-node propose.mjs --to <jid> --body "…"  # propose a draft
+node propose.mjs --to <jid> --body "…" --body-bot "…"   # propose a draft
 date                                    # you do NOT know what time it is — run this
 ```
 
@@ -88,29 +88,57 @@ order by m.ts desc limit 20;
 
 ## Proposing
 
+Every draft carries **two wordings of the same message**, because who sends it
+is decided only when he approves:
+
+- `--body` — in **his own voice** with that person, the way he writes to them
+  (see "Writing as the owner"). Goes out with `/ok`, from his account.
+- `--body-bot` — the **formal** version: same content, facts and commitments,
+  written as a courteous assistant writing on his behalf. No slang, no
+  nicknames, no emoji; greet the person by name. Goes out with `/bot`, from
+  the bot's number — the recipient may not know that number, so it must read
+  as a proper message from someone speaking for him.
+
 ```bash
-node propose.mjs --to '<chat_jid>' --name 'Líderes' --body 'texto exato'
+node propose.mjs --to '<chat_jid>' --name 'Líderes' \
+  --body 'texto exato do jeito dele' \
+  --body-bot 'versão formal da mesma mensagem'
 ```
+
+`propose.mjs` refuses a draft without `--body-bot`.
+
+A request can come with a file to send. It then ends with a line like
+`[arquivo para anexar ao rascunho: "handoff.md" em /…/media/…-handoff.md — …]`.
+Attach it exactly as that line says, and write both texts as the caption that
+goes with the file:
+
+```bash
+node propose.mjs --to '<jid>' --body '…' --body-bot '…' \
+  --attach '/…/media/…-handoff.md' --attach-name 'handoff.md'
+```
+
+Only files under the claude-wpp media directory can be attached; do not try
+other paths.
 
 Replying to a specific message — pass its `wa_id` so it quotes properly, the way
 they would on their phone:
 
 ```bash
-node propose.mjs --to '<chat_jid>' --body 'texto' --quote '<wa_id>'
+node propose.mjs --to '<chat_jid>' --body 'texto' --body-bot 'formal' --quote '<wa_id>'
 ```
 
 Scheduling. `--at` takes ISO 8601 **with the offset**, which you compute from
 `date`:
 
 ```bash
-node propose.mjs --to '<jid>' --body 'texto' --at '2026-08-28T09:00:00-03:00'
+node propose.mjs --to '<jid>' --body 'texto' --body-bot 'formal' --at '2026-08-28T09:00:00-03:00'
 ```
 
 Conditional — checked again right before it fires. Use this whenever the
 reminder would be pointless or rude if the person already answered:
 
 ```bash
-node propose.mjs --to '<jid>' --body 'texto' --at '<iso>' \
+node propose.mjs --to '<jid>' --body 'texto' --body-bot 'formal' --at '<iso>' \
   --check 'ele já confirmou que traz o macbook?'
 ```
 

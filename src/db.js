@@ -102,6 +102,8 @@ const COLUNAS_NOVAS = {
     ['attachment_path', 'TEXT'],
     ['attachment_name', 'TEXT'],
     ['attachment_mimetype', 'TEXT'],
+    // The formal wording /bot sends; `body` is the owner's own voice, for /ok.
+    ['body_bot', 'TEXT'],
   ],
 }
 
