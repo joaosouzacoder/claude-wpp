@@ -1,8 +1,10 @@
-import { rmSync } from 'node:fs'
+import { rmSync, statSync, readFileSync } from 'node:fs'
+import { basename } from 'node:path'
 import { parse } from './router.js'
 import { emAndamento } from './claude.js'
 import { chunkText } from './text.js'
-import { promptComImagem } from './media.js'
+import { promptComImagem, promptComArquivo, extrairArquivos } from './media.js'
+import { mimetypeDe } from './mimetypes.js'
 import { formatDraft, formatQueue } from './wpp.js'
 
 const SESSAO_WPP = 'wpp'
@@ -16,7 +18,10 @@ const PREVIA_ANEXO = 700
 // system-prompt snapshot), so it only takes effect from a session's first
 // message onward — a session /importar picked up already had its own
 // snapshot locked in before this bot ever touched it.
-const FORMATO_WHATSAPP = 'Your reply will be read on WhatsApp, not a terminal or an IDE. Format it for that: short paragraphs, plain text, no large tables or deeply nested markdown — write so it reads well on a phone screen.'
+const FORMATO_WHATSAPP = 'Your reply will be read on WhatsApp, not a terminal or an IDE. Format it for that: short paragraphs, plain text, no large tables or deeply nested markdown — write so it reads well on a phone screen. To hand the user a file (a report, CSV, chart, PDF, image you created or found), write `[[arquivo: /absolute/path]]` on a line of its own — it is sent to them as an attachment and the line is removed from your reply. Only for files that exist; one line per file.'
+
+// Past this, a file named in a reply is not read into memory to be sent.
+const LIMITE_ARQUIVO_SAIDA = 64 * 1024 * 1024
 
 const AJUDA = [
   'Comandos:',
@@ -79,7 +84,36 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
   // number meant. Only ever read right after a fresh /manuais.
   let sessoesManuais = []
 
-  async function responder(nome, texto) {
+  // Files Claude marked for delivery go out after its text, each as an
+  // attachment. Always to the owner: `reply`/`replyFile` only ever reach
+  // authorizedNumber, whatever path the reply names.
+  async function responder(nome, texto, cwd = config.defaultCwd) {
+    const { texto: limpo, arquivos } = extrairArquivos(texto, cwd)
+    if (limpo || !arquivos.length) await responderTexto(nome, limpo)
+    for (const caminho of arquivos) await entregarArquivo(nome, caminho)
+  }
+
+  async function entregarArquivo(nome, caminho) {
+    const nomeArquivo = basename(caminho)
+    let info
+    try {
+      info = statSync(caminho)
+    } catch {
+      return reply(`[${nome}] (não achei o arquivo ${caminho} para anexar)`)
+    }
+    if (!info.isFile()) return reply(`[${nome}] (${caminho} não é um arquivo — não anexei)`)
+    if (info.size > LIMITE_ARQUIVO_SAIDA) {
+      return reply(`[${nome}] (${nomeArquivo} tem ${Math.round(info.size / 1024 / 1024)} MB — grande demais para anexar; está em ${caminho})`)
+    }
+    if (!replyFile) return reply(`[${nome}] (arquivo em ${caminho})`)
+    try {
+      await replyFile({ content: readFileSync(caminho), fileName: nomeArquivo, caption: `[${nome}] ${nomeArquivo}`, mimetype: mimetypeDe(nomeArquivo) })
+    } catch (err) {
+      await reply(`[${nome}] (não consegui anexar ${nomeArquivo}: ${err.message}; está em ${caminho})`)
+    }
+  }
+
+  async function responderTexto(nome, texto) {
     // A long reply as a run of bubbles cannot be read or searched on a phone.
     // As a file it can — with the opening in the caption, so the gist still
     // shows up in the chat. If the attachment cannot go out, the bubbles still
@@ -157,7 +191,7 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
       // whatever is already queued behind this turn — the run itself did
       // finish, so the queue still has to drain, the same way onSlow/onNotice
       // above already tolerate reply() failing.
-      await responder(sessao.name, r.ok ? r.text : `Erro: ${r.error}`).catch(() => {})
+      await responder(sessao.name, r.ok ? r.text : `Erro: ${r.error}`, sessao.cwd).catch(() => {})
     } finally {
       sessao.busy = false
       sessao.abort = null
@@ -224,7 +258,7 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
         const ultima = await sessions.lastReply?.(s.name).catch(() => null)
         if (ultima?.timestamp && Date.parse(ultima.timestamp) > Date.parse(startedAt)) {
           sessions.endRun(s.name)
-          await responder(s.name, `(chegou enquanto eu reiniciava — é a última resposta da sessão)\n\n${ultima.content}`)
+          await responder(s.name, `(chegou enquanto eu reiniciava — é a última resposta da sessão)\n\n${ultima.content}`, s.cwd)
           continue
         }
 
@@ -485,6 +519,10 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
   async function handle(entrada) {
     const { text, media } = typeof entrada === 'string' ? { text: entrada, media: null } : (entrada ?? {})
 
+    if (media?.tooLarge) {
+      return reply(`O arquivo ${media.fileName ?? ''} tem ${Math.round(media.size / 1024 / 1024)} MB — acima do limite que eu baixo. Compacta ou manda um pedaço.`)
+    }
+
     let texto = text
     if (media?.kind === 'audio') {
       const r = await textoDoAudio(media.path)
@@ -514,7 +552,11 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
       }
     }
 
-    const prompt = media?.kind === 'image' ? promptComImagem(cmd.text, media.path) : cmd.text
+    const prompt = media?.kind === 'image'
+      ? promptComImagem(cmd.text, media.path)
+      : media?.kind === 'document'
+        ? promptComArquivo(cmd.text, media.path, media.fileName)
+        : cmd.text
     return despachar(sessao, prompt)
   }
 

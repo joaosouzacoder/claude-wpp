@@ -3,7 +3,29 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, existsSync, writeFileSync, utimesSync } from 'node:fs'
 import { join, dirname, extname } from 'node:path'
 import { tmpdir } from 'node:os'
-import { saveMedia, promptComImagem, limparMediaAntiga } from '../src/media.js'
+import { saveMedia, promptComImagem, limparMediaAntiga, extrairArquivos } from '../src/media.js'
+import { homedir } from 'node:os'
+
+test('documento é salvo com o nome original, sem virar caminho', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'media-'))
+  const caminho = saveMedia({ dir, buffer: Buffer.from('x'), mimetype: 'application/pdf', kind: 'document', fileName: '../../etc/contrato final.pdf' })
+  assert.equal(dirname(caminho), dir, 'fica dentro da pasta de mídia')
+  assert.ok(caminho.endsWith('-_.._etc_contrato final.pdf'), caminho)
+  assert.equal(extname(caminho), '.pdf')
+  assert.equal(readFileSync(caminho, 'utf8'), 'x')
+})
+
+test('extrairArquivos tira as marcas, resolve relativo e ~, e não repete', () => {
+  const { texto, arquivos } = extrairArquivos('Pronto.\n[[arquivo: out/a.csv]]\n  [[arquivo: ~/b.pdf]]\n[[arquivo: out/a.csv]]\nFim.', '/srv/proj')
+  assert.equal(texto, 'Pronto.\nFim.')
+  assert.deepEqual(arquivos, ['/srv/proj/out/a.csv', join(homedir(), 'b.pdf')])
+})
+
+test('extrairArquivos ignora a marca no meio de uma frase', () => {
+  const { texto, arquivos } = extrairArquivos('use [[arquivo: x]] assim', '/srv')
+  assert.equal(texto, 'use [[arquivo: x]] assim')
+  assert.deepEqual(arquivos, [])
+})
 
 function pastaTemp() {
   return mkdtempSync(join(tmpdir(), 'media-'))

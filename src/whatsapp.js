@@ -26,6 +26,18 @@ export function classificar(msg) {
   if (m.audioMessage) {
     return { kind: 'audio', text: '', mimetype: m.audioMessage.mimetype ?? null }
   }
+  // A document sent with a caption arrives wrapped one level deeper.
+  const doc = m.documentMessage ?? m.documentWithCaptionMessage?.message?.documentMessage
+  if (doc) {
+    return {
+      kind: 'document',
+      text: doc.caption ?? '',
+      mimetype: doc.mimetype ?? null,
+      fileName: doc.fileName ?? null,
+      // protobuf Long or number, depending on how Baileys decoded it.
+      size: Number(doc.fileLength?.toString?.() ?? doc.fileLength ?? 0) || 0,
+    }
+  }
 
   return {
     kind: 'text',
@@ -49,6 +61,10 @@ export const aceitaTudo = () => true
 // A persistent failure (WhatsApp throttling this number, a sustained outage)
 // must not turn into hammering the endpoint every 3s forever — exponential
 // backoff with jitter, capped so it never goes past a minute between tries.
+// A document from the phone is downloaded into memory before it is written;
+// past this it is refused instead.
+export const LIMITE_DOCUMENTO = 50 * 1024 * 1024
+
 const RECONNECT_BASE_MS = 3000
 const RECONNECT_MAX_MS = 60000
 
@@ -236,15 +252,18 @@ export function createWhatsapp({
             continue
           }
 
-          const { kind, text, mimetype } = classificar(msg)
+          const { kind, text, mimetype, fileName, size } = classificar(msg)
 
           let media = null
-          if (kind !== 'text') {
+          if (kind === 'document' && size > LIMITE_DOCUMENTO) {
+            // The download is buffered whole in memory; decide before it.
+            media = { kind, mimetype, fileName, size, tooLarge: true }
+          } else if (kind !== 'text') {
             const buffer = await baixarMidia(msg, 'buffer', {}, {
               logger: loggerMudo,
               reuploadRequest: sock.updateMediaMessage,
             })
-            media = { kind, mimetype, path: saveMedia({ dir: mediaDir, buffer, mimetype, kind }) }
+            media = { kind, mimetype, fileName, path: saveMedia({ dir: mediaDir, buffer, mimetype, kind, fileName }) }
             log.debug?.(`${kind} salvo em ${media.path}`)
           }
 

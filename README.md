@@ -57,7 +57,7 @@ big tables or deeply nested markdown. Claude Code only renders a session's
 system prompt from its first message onward, so a session `/importar` picked
 up already had this decided before the bot ever touched it.
 
-## Audio and images
+## Audio, images and files
 
 A voice note is transcribed by the OpenAI transcription API and then follows the
 exact same path as typed text — so `/ls` and `@session do this` work dictated.
@@ -70,11 +70,27 @@ Claude to analyse the image. Images are kept on disk so Claude can revisit them
 later in the session — every boot removes anything older than `mediaMaxAgeMs`
 on its own, so growth is bounded automatically instead of needing a manual prune.
 
+A document — PDF, spreadsheet, CSV, log, anything sent as a file — works the
+same way: saved under that directory with its original name (so its extension
+still tells Claude how to open it), path in the prompt, caption as the request.
+Without a caption the bot asks Claude to analyse it. Documents over 50 MB are
+refused before they are downloaded, since the download is held in memory.
+
+Files also go the other way. Claude is told that writing
+`[[arquivo: /path/to/file]]` on a line of its own hands you that file: the
+line is removed from the reply and the file arrives as an attachment right
+after the text. A relative path is resolved from the session's folder. A path
+that does not exist, or a file over 64 MB, becomes a short note instead of
+silently vanishing. It only ever goes to `authorizedNumber` — the same person
+who already has a shell here through Claude. Like the rest of that
+instruction, a session learns it from its first message, so one started
+before this feature needs `/end` + `/new` (or `/cd`) to pick it up.
+
 Audio needs an OpenAI key, in `openaiApiKey` or in `OPENAI_API_KEY`. **This is
 the one part of the project that talks to a paid third-party API**, and it is
 optional: without a key, audio replies with the reason and everything else keeps
-working. Video, documents and stickers are still ignored — only the caption of a
-video is read, as before.
+working. Video and stickers are still ignored — only the caption of a video is
+read, as before.
 
 | Key | Default | What it does |
 |---|---|---|

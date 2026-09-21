@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync, readdirSync, statSync, unlinkSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
+import { homedir } from 'node:os'
 
 const EXTENSOES = {
   'image/jpeg': 'jpg',
@@ -19,6 +20,7 @@ const EXTENSOES = {
 const PADRAO_POR_TIPO = { image: 'jpg', audio: 'ogg' }
 
 const PEDIDO_PADRAO = 'Analise a imagem anexada.'
+const PEDIDO_ARQUIVO_PADRAO = 'Analise o arquivo anexado.'
 
 // WhatsApp sends the mimetype with parameters ("audio/ogg; codecs=opus").
 function extensao(mimetype, kind) {
@@ -26,9 +28,21 @@ function extensao(mimetype, kind) {
   return EXTENSOES[base] ?? PADRAO_POR_TIPO[kind] ?? 'bin'
 }
 
-export function saveMedia({ dir, buffer, mimetype, kind }) {
+// The sender's file name comes from the phone: kept only as a readable
+// suffix, stripped of anything that could make it a path.
+function nomeSeguro(nome) {
+  return String(nome ?? '').replace(/[/\\\0]/g, '_').replace(/^\.+/, '').slice(-120)
+}
+
+export function saveMedia({ dir, buffer, mimetype, kind, fileName = null }) {
   mkdirSync(dir, { recursive: true })
-  const caminho = join(dir, `${Date.now()}-${randomUUID().slice(0, 8)}.${extensao(mimetype, kind)}`)
+  const prefixo = `${Date.now()}-${randomUUID().slice(0, 8)}`
+  // A document keeps its own name (and so its extension, which is what tells
+  // Claude how to open it); mimetypes of documents are too many to map.
+  const nome = kind === 'document' && nomeSeguro(fileName)
+    ? `${prefixo}-${nomeSeguro(fileName)}`
+    : `${prefixo}.${extensao(mimetype, kind)}`
+  const caminho = join(dir, nome)
   writeFileSync(caminho, buffer)
   return caminho
 }
@@ -36,6 +50,28 @@ export function saveMedia({ dir, buffer, mimetype, kind }) {
 export function promptComImagem(legenda, caminho) {
   const texto = String(legenda ?? '').trim() || PEDIDO_PADRAO
   return `${texto}\n\n[imagem anexada em ${caminho} — leia o arquivo para respondê-la]`
+}
+
+const MARCA_ARQUIVO = /^[ \t]*\[\[arquivo:[ \t]*(.+?)[ \t]*\]\][ \t]*(?:\r?\n|$)/gm
+
+// Pulls the `[[arquivo: path]]` lines Claude writes (see FORMATO_WHATSAPP in
+// handler.js) out of a reply. A relative path is resolved from the session's
+// folder, where Claude ran; `~` from the home directory.
+export function extrairArquivos(texto, cwd) {
+  const arquivos = []
+  const limpo = String(texto ?? '').replace(MARCA_ARQUIVO, (_, bruto) => {
+    const expandido = bruto === '~' ? homedir() : bruto.replace(/^~\//, `${homedir()}/`)
+    const caminho = resolve(cwd, expandido)
+    if (!arquivos.includes(caminho)) arquivos.push(caminho)
+    return ''
+  })
+  return { texto: limpo.replace(/\n{3,}/g, '\n\n').trim(), arquivos }
+}
+
+export function promptComArquivo(legenda, caminho, nomeOriginal) {
+  const texto = String(legenda ?? '').trim() || PEDIDO_ARQUIVO_PADRAO
+  const nome = nomeOriginal ? ` (${nomeOriginal})` : ''
+  return `${texto}\n\n[arquivo anexado${nome} em ${caminho} — leia o arquivo para responder]`
 }
 
 // Images are kept on disk on purpose — so Claude can revisit one from earlier
