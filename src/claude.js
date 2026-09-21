@@ -65,6 +65,12 @@ export function parseBgId(stdout) {
   return m ? m[1] : null
 }
 
+// Whether a `claude agents` entry is still doing its turn, including while
+// it starts up (see the poll loop in acompanhar).
+export function emAndamento(estado) {
+  return estado?.status === 'busy' || estado?.state === 'working'
+}
+
 function lerJson(stdout) {
   try {
     return JSON.parse(stdout)
@@ -282,7 +288,12 @@ export function createClaude({
           onDispatch?.({ bgId, sessionId: sessionIdCompleto })
         }
 
-        if (estado?.status === 'busy') {
+        // `status` lags behind while the agent starts up: for its first
+        // seconds (over ten, seen with an image) it reads as missing or
+        // `idle` while `state` already says `working`. Only `status` counted
+        // before, so a slow start was taken for a finished turn and the
+        // reply was looked for before it existed.
+        if (emAndamento(estado)) {
           quietas = 0
           bloqueado = false
         } else if (estado?.state === 'blocked') {
