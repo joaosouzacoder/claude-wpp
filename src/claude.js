@@ -111,6 +111,7 @@ export function createClaude({
     appendSystemPrompt = null,
     onSlow,
     onNotice,
+    onDispatch,
     signal,
   } = {}) {
     // A brand-new folder asks, once, whether to trust it — a dialog `--bg`
@@ -138,7 +139,60 @@ export function createClaude({
       }
     }
 
-    const comecou = now()
+    const disparar = async () => {
+      const args = ['--bg', '--dangerously-skip-permissions']
+      if (name) args.push('-n', name)
+      if (sessionId) args.push('--resume', sessionId)
+      if (appendSystemPrompt) args.push('--append-system-prompt', appendSystemPrompt)
+      args.push(prompt)
+
+      const enviadoEm = now()
+      const disparo = await runCli(bin, args, { cwd, timeoutMs: DISPATCH_TIMEOUT_MS })
+      if (disparo.timedOut) return { erro: 'o claude não confirmou o disparo em segundo plano a tempo' }
+      if (disparo.code !== 0) {
+        const detalhe = (disparo.stderr || disparo.stdout || '').trim().slice(0, 300)
+        return { erro: detalhe || `exit ${disparo.code}` }
+      }
+      const bgId = parseBgId(disparo.stdout)
+      if (!bgId) return { erro: `não entendi a confirmação de disparo do claude: ${disparo.stdout.trim().slice(0, 200)}` }
+      return { bgId, enviadoEm }
+    }
+
+    return acompanhar({ bin, name, cwd, sessionId, slowNoticeMs, heartbeatMs, timeoutMs, blockedTimeoutMs, onSlow, onNotice, onDispatch, signal, disparar })
+  }
+
+  // Picks a turn back up after this process restarted mid-run. The background
+  // agent lives in claude's own daemon, not in this process, so it can still be
+  // working — or already done — when the bot comes back. Re-dispatching the
+  // prompt instead would run the same request twice.
+  async function attach({
+    bin = defaultBin,
+    name = null,
+    cwd,
+    bgId,
+    sessionId = null,
+    sentAt,
+    slowNoticeMs = 8000,
+    heartbeatMs = null,
+    timeoutMs = null,
+    blockedTimeoutMs = BLOQUEIO_TIMEOUT_MS,
+    onSlow,
+    onNotice,
+    onDispatch,
+    signal,
+  } = {}) {
+    const enviadoEm = Date.parse(sentAt)
+    return acompanhar({
+      bin, name, cwd, sessionId, slowNoticeMs, heartbeatMs, timeoutMs, blockedTimeoutMs, onSlow, onNotice, onDispatch, signal,
+      comecou: enviadoEm,
+      disparar: async () => ({ bgId, enviadoEm }),
+    })
+  }
+
+  async function acompanhar({
+    bin, name, cwd, sessionId, slowNoticeMs, heartbeatMs, timeoutMs, blockedTimeoutMs, onSlow, onNotice, onDispatch, signal, disparar,
+    comecou = now(),
+  }) {
     let finalizado = false
     let batida = null
     // While blocked, onNotice below already says so — repeating "ainda
@@ -188,21 +242,14 @@ export function createClaude({
     signal?.addEventListener('abort', aoAbortar, { once: true })
 
     try {
-      const args = ['--bg', '--dangerously-skip-permissions']
-      if (name) args.push('-n', name)
-      if (sessionId) args.push('--resume', sessionId)
-      if (appendSystemPrompt) args.push('--append-system-prompt', appendSystemPrompt)
-      args.push(prompt)
-
-      const enviadoEm = now()
-      const disparo = await runCli(bin, args, { cwd, timeoutMs: DISPATCH_TIMEOUT_MS })
-      if (disparo.timedOut) return { ok: false, text: '', sessionId, error: 'o claude não confirmou o disparo em segundo plano a tempo' }
-      if (disparo.code !== 0) {
-        const detalhe = (disparo.stderr || disparo.stdout || '').trim().slice(0, 300)
-        return { ok: false, text: '', sessionId, error: detalhe || `exit ${disparo.code}` }
-      }
-      bgId = parseBgId(disparo.stdout)
-      if (!bgId) return { ok: false, text: '', sessionId, error: `não entendi a confirmação de disparo do claude: ${disparo.stdout.trim().slice(0, 200)}` }
+      const disparo = await disparar()
+      if (disparo.erro) return { ok: false, text: '', sessionId, error: disparo.erro }
+      bgId = disparo.bgId
+      const { enviadoEm } = disparo
+      // Tells the caller which background agent now holds this turn while it
+      // is still in flight, so a restart can find it again instead of
+      // re-running the prompt.
+      onDispatch?.({ bgId, sessionId: sessionIdCompleto })
 
       // An abort that arrived while the dispatch call was in flight found no
       // bgId yet, so the listener below had nothing to stop. Catch that up
@@ -230,7 +277,10 @@ export function createClaude({
           lista = null
         }
         const estado = lista?.find((s) => s.id === bgId) ?? null
-        if (estado?.sessionId) sessionIdCompleto = estado.sessionId
+        if (estado?.sessionId && estado.sessionId !== sessionIdCompleto) {
+          sessionIdCompleto = estado.sessionId
+          onDispatch?.({ bgId, sessionId: sessionIdCompleto })
+        }
 
         if (estado?.status === 'busy') {
           quietas = 0
@@ -321,13 +371,17 @@ export function createClaude({
     }
   }
 
-  return { run, listAgents }
+  return { run, attach, listAgents }
 }
 
 const claudePadrao = createClaude()
 
 export function runClaude(opts) {
   return claudePadrao.run(opts)
+}
+
+export function attachClaude(opts) {
+  return claudePadrao.attach(opts)
 }
 
 // Every claude session on this host, not just the ones this bot started —

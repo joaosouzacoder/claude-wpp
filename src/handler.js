@@ -68,7 +68,7 @@ function ociosidade(iso) {
   return `${Math.floor(min / 60)}h`
 }
 
-export function createHandler({ sessions, run, transcribe, reply, config, wpp = null, listAgents = null }) {
+export function createHandler({ sessions, run, attach = null, transcribe, reply, config, wpp = null, listAgents = null }) {
   // What /manuais last showed, so /importar <n> knows which session that
   // number meant. Only ever read right after a fresh /manuais.
   let sessoesManuais = []
@@ -83,26 +83,34 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
     // On disk before the first token: if this process dies mid-run, the next
     // boot is the only thing left that can tell you the reply is owed.
     sessions.beginRun(sessao.name, prompt)
+    return conduzir(sessao, (opcoes) => run({
+      ...opcoes,
+      prompt,
+      sessionId: sessao.claudeSessionId,
+      appendSystemPrompt: FORMATO_WHATSAPP,
+    }))
+  }
+
+  // Carries one turn from start to delivered reply, whether it was dispatched
+  // just now or picked back up after a restart: the busy flag, the progress
+  // notices, the answer, and draining whatever queued up behind it.
+  async function conduzir(sessao, iniciar, { avisou = false } = {}) {
     sessao.busy = true
     sessao.abort = new AbortController()
-    let avisou = false
 
     try {
       // run() rejecting outright (not resolving {ok:false, error}, which is
       // its normal way of reporting a failure) must still land on the same
       // path: otherwise the exception skips straight past the queue-drain
       // continuation below, orphaning whatever is already queued behind it.
-      const r = await run({
+      const r = await iniciar({
         bin: config.claudeBin,
         name: sessao.name,
         cwd: sessao.cwd,
-        prompt,
-        sessionId: sessao.claudeSessionId,
         slowNoticeMs: config.slowNoticeMs,
         heartbeatMs: config.heartbeatMs,
         timeoutMs: config.timeoutMs,
         blockedTimeoutMs: config.blockedTimeoutMs,
-        appendSystemPrompt: FORMATO_WHATSAPP,
         signal: sessao.abort.signal,
         onSlow: (decorrido) => {
           const texto = avisou
@@ -112,6 +120,7 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
           reply(texto).catch(() => {})
         },
         onNotice: (texto) => { reply(`[${sessao.name}] ${texto}`).catch(() => {}) },
+        onDispatch: (disparo) => sessions.markDispatched(sessao.name, disparo),
       }).catch((err) => ({ ok: false, text: '', sessionId: null, error: err.message ?? String(err) }))
 
       // sessionBroken means the id we tried to --resume is proven dead (claude
@@ -155,6 +164,17 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
     await executar(sessao, prompt)
   }
 
+  // Only `busy` and `blocked` mean the turn is still going. Anything else —
+  // gone from the listing, idle, failed, or a listing that could not be read —
+  // falls through to asking you, which is the safe side: nothing re-runs on
+  // its own.
+  async function agenteVivo(bgId) {
+    if (!bgId || !attach || !listAgents) return false
+    const lista = await listAgents(config.claudeBin).catch(() => null)
+    const estado = lista?.find((a) => a.id === bgId)
+    return estado?.status === 'busy' || estado?.state === 'blocked'
+  }
+
   // Every acknowledged request owes a terminal answer. A run killed with the
   // process never produced one, so the next boot delivers it.
   async function recuperar() {
@@ -162,8 +182,20 @@ export function createHandler({ sessions, run, transcribe, reply, config, wpp = 
       // One session's notice failing to deliver must not abort the loop and
       // silently skip every other interrupted session behind it.
       try {
-        const { prompt, startedAt } = s.pending
+        const { prompt, startedAt, bgId, sessionId } = s.pending
         const quando = ociosidade(startedAt)
+
+        // Still running in claude's daemon, which a restart of this process
+        // does not touch: wait for it like any other turn. Offering /retomar
+        // here would run the same request a second time, alongside the first.
+        // Checked before the transcript on purpose: a turn in progress can
+        // already have written intermediate text, which is not its answer.
+        if (await agenteVivo(bgId)) {
+          await reply(`[${s.name}] Reiniciei no meio do seu pedido, mas ele continua rodando — mando a resposta quando terminar.`).catch(() => {})
+          conduzir(s, (opcoes) => attach({ ...opcoes, bgId, sessionId: sessionId ?? s.claudeSessionId, sentAt: startedAt }), { avisou: true })
+            .catch(() => {})
+          continue
+        }
 
         // The claude session runs detached from this process: the work may well
         // have finished while nobody was listening. Hand that over instead of

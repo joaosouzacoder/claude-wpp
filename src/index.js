@@ -5,7 +5,7 @@ import { createSessions } from './sessions.js'
 import { createHandler } from './handler.js'
 import { createWhatsapp, aceitaDoBot } from './whatsapp.js'
 import { createApi } from './api.js'
-import { runClaude, listAgents } from './claude.js'
+import { runClaude, attachClaude, listAgents } from './claude.js'
 import { transcribe } from './transcribe.js'
 import { formatDraft } from './wpp.js'
 import { contaPessoalPareada, montarContaPessoal } from './boot.js'
@@ -81,6 +81,7 @@ async function main() {
   handler = createHandler({
     sessions,
     run,
+    attach: attachClaude,
     transcribe,
     reply: avisar,
     config,

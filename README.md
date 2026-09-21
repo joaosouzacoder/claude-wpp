@@ -98,10 +98,23 @@ you would rather have a cap. Every reply is prefixed with
 ### A restart no longer eats your request
 
 The prompt being run and the ones queued behind it are written to the state
-file, not just held in memory. If the daemon dies mid-run — a deploy, a crash,
-a reboot — the next boot tells you which request never finished and offers
-`/retomar` to redo it or `/descartar` to forget it. Nothing is re-run on its
-own, because the dead run may already have had side effects.
+file, not just held in memory, together with the id of the background agent
+running it as soon as `claude --bg` hands one back.
+
+The turn itself runs in claude's own background daemon, not in this process,
+and the systemd unit stops only the Node process (`KillMode=process`) — so a
+restart of the bot does not kill the work. On the next boot:
+
+- if that agent is **still running**, the bot says so and picks it back up,
+  delivering the reply when it finishes, as if nothing had happened;
+- if it **already finished**, the reply is delivered;
+- otherwise — a reboot, a crash that took the agent with it — the bot tells
+  you which request never finished and offers `/retomar` to redo it or
+  `/descartar` to forget it. Nothing is re-run on its own, because the dead
+  run may already have had side effects.
+
+The unit change only takes effect once it is reinstalled: rerun `./install.sh`
+(it copies the unit and reloads systemd).
 
 An ordinary message sent to that session before you answer is queued, not run
 — starting a fresh turn would overwrite the record of the one still waiting
