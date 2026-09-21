@@ -6,7 +6,7 @@ import { createOutbox } from '../src/outbox.js'
 import { createNotifier } from '../src/notify.js'
 import { createCapture } from '../src/capture.js'
 import { createContactResolver } from '../src/contacts.js'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -447,6 +447,74 @@ test('nome que não existe é 404, e nada sai', async () => {
   assert.equal(r.status, 404)
   assert.equal(texto.length, 0)
   await servidor.close()
+})
+
+async function subirComRascunhos() {
+  const dir = mkdtempSync(join(tmpdir(), 'api-rascunho-'))
+  const db = openDb(join(dir, 'wpp.db'))
+  createCapture({ db }).rememberChat({ jid: '5511911111111@s.whatsapp.net', name: 'Fulano Bailāo', kind: 'dm' })
+  const outboxReal = createOutbox({ db })
+  const avisados = []
+  const saiu = []
+  const wa = {
+    sendText: async (...a) => { saiu.push(a) },
+    sendDocument: async (...a) => { saiu.push(a) },
+    state: () => 'open',
+  }
+  const servidor = createApi({
+    host: '127.0.0.1', port: 0, token: 'segredo', whatsapp: wa,
+    outbox: outboxReal, onDraft: (r) => { avisados.push(r) },
+    contacts: createContactResolver(db), mediaDir: join(dir, 'media'),
+  })
+  const url = `http://127.0.0.1:${await servidor.listen()}`
+  const post = (rota, corpo) => fetch(`${url}${rota}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer segredo' },
+    body: JSON.stringify(corpo),
+  })
+  return { servidor, post, outboxReal, avisados, saiu }
+}
+
+test('send-file com confirm vira rascunho com anexo, e nada sai antes do seu ok', async () => {
+  const { servidor, post, outboxReal, avisados, saiu } = await subirComRascunhos()
+  const r = await post('/send-file', { to: 'Beltrano', fileName: 'x', content: 'b2k=', confirm: true })
+  assert.equal(r.status, 404, 'nome errado continua 404 mesmo com confirm')
+
+  const ok = await post('/send-file', { to: 'fulano bailão', fileName: 'handoff.md', content: Buffer.from('# oi\n').toString('base64'), caption: 'segue', confirm: true })
+  assert.equal(ok.status, 202)
+  const corpo = await ok.json()
+  assert.deepEqual(corpo, { ok: true, draft: corpo.draft, to: 'Fulano Bailāo' })
+
+  const d = outboxReal.get(corpo.draft)
+  assert.equal(d.status, 'pending')
+  assert.equal(d.chat_jid, '5511911111111@s.whatsapp.net')
+  assert.equal(d.body, 'segue')
+  assert.equal(d.attachment_name, 'handoff.md')
+  assert.equal(d.attachment_mimetype, 'text/markdown')
+  assert.equal(readFileSync(d.attachment_path, 'utf8'), '# oi\n', 'o arquivo ficou guardado para sair depois')
+  assert.equal(avisados.length, 1, 'o dono recebe o rascunho para decidir')
+  assert.equal(saiu.length, 0, 'nada saiu')
+  await servidor.close()
+})
+
+test('send com confirm vira rascunho de texto', async () => {
+  const { servidor, post, outboxReal, saiu } = await subirComRascunhos()
+  const r = await post('/send', { to: '5511911111111', text: 'oi', confirm: true })
+  assert.equal(r.status, 202)
+  const d = outboxReal.get((await r.json()).draft)
+  assert.equal(d.chat_jid, '5511911111111@s.whatsapp.net')
+  assert.equal(d.body, 'oi')
+  assert.equal(saiu.length, 0)
+  await servidor.close()
+})
+
+test('confirm sem conta pessoal é 503, não um envio direto', async () => {
+  const r = await fetch(`${base}/send`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer segredo' },
+    body: JSON.stringify({ to: '5511911111111', text: 'oi', confirm: true }),
+  })
+  assert.equal(r.status, 503)
 })
 
 test('nome sem conta pessoal configurada explica que precisa do número', async () => {

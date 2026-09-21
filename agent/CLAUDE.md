@@ -18,7 +18,9 @@ You already have everything you need.
 
 **You never send anything.** You propose; the owner approves. `propose.mjs` creates a
 pending draft and stops there — a message only leaves this machine after he
-replies `/ok <n>` on WhatsApp.
+replies `/ok <n>` (sent as him) or `/bot <n>` (sent from the bot's number) on
+WhatsApp. Which of the two is his call when he approves, not yours: never
+write a draft that assumes one or the other.
 
 Do not try to route around this. No `curl` to `/send`, no other path. If you
 think a draft should go out immediately, say so in your answer and let him

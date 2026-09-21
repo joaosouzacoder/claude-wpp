@@ -69,6 +69,28 @@ export function openDb(filePath) {
   db.exec('PRAGMA journal_mode = WAL')
   db.exec('PRAGMA foreign_keys = ON')
   for (const ddl of ESQUEMA) db.exec(ddl)
+  migrar(db)
 
   return db
+}
+
+// Additive only: columns added to tables that already exist on disk. Every
+// new column is nullable or defaulted so existing rows keep their meaning —
+// a draft recorded before `sender` existed was always sent as the owner.
+const COLUNAS_NOVAS = {
+  outbox: [
+    ['sender', "TEXT NOT NULL DEFAULT 'me'"],
+    ['attachment_path', 'TEXT'],
+    ['attachment_name', 'TEXT'],
+    ['attachment_mimetype', 'TEXT'],
+  ],
+}
+
+function migrar(db) {
+  for (const [tabela, colunas] of Object.entries(COLUNAS_NOVAS)) {
+    const existentes = new Set(db.prepare(`PRAGMA table_info(${tabela})`).all().map((c) => c.name))
+    for (const [nome, tipo] of colunas) {
+      if (!existentes.has(nome)) db.exec(`ALTER TABLE ${tabela} ADD COLUMN ${nome} ${tipo}`)
+    }
+  }
 }

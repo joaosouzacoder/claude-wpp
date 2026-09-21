@@ -59,7 +59,7 @@ async function main() {
   log.info(`${sessions.list().length} sessão(ões) recuperada(s) do estado.`)
   await whatsapp.connect()
 
-  let pessoal = contaPessoalPareada(config) ? montarContaPessoal(config, avisar, log) : null
+  let pessoal = contaPessoalPareada(config) ? montarContaPessoal(config, avisar, log, whatsapp) : null
   if (!pessoal && config.personalNumber) {
     log.warn('conta pessoal configurada mas não pareada — rode `npm run pair:me`.')
   }
@@ -120,6 +120,7 @@ async function main() {
     personalState: pessoal ? () => pessoal.me.state() : null,
     notifier: createNotifier({ send: avisar, dedupMs: config.notifyDedupMs }),
     contacts: pessoal ? createContactResolver(pessoal.db) : null,
+    mediaDir: config.mediaDir,
   })
 
   for (const sinal of ['SIGINT', 'SIGTERM']) {

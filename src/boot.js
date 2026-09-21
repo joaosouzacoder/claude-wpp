@@ -18,7 +18,8 @@ export function contaPessoalPareada(config) {
   return Boolean(config.personalNumber) && credenciaisValidas(config.personalAuthDir)
 }
 
-export function montarContaPessoal(config, avisar, log) {
+// `bot` is the bot's own WhatsApp, used for drafts approved with /bot.
+export function montarContaPessoal(config, avisar, log, bot = null) {
   const db = openDb(config.dbPath)
   const capture = createCapture({ db })
   const outbox = createOutbox({ db })
@@ -45,6 +46,7 @@ export function montarContaPessoal(config, avisar, log) {
     db,
     outbox,
     wa: me,
+    bot,
     run: runClaude,
     config: {
       claudeBin: config.claudeBin,
