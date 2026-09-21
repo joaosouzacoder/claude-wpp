@@ -301,6 +301,36 @@ test('mensagem que causa exceção não impede as seguintes de serem processadas
   assert.deepEqual(processadas, ['passa'])
 })
 
+test('mensagem recusada pelo accept vai só para onOther, nunca para onMessage', async () => {
+  const aceitas = []
+  const outras = []
+  const { wa, sockets } = montarWhatsapp({
+    accept: (key) => key.remoteJid === 'dono@s.whatsapp.net',
+    onMessage: async (m) => { aceitas.push(m.text) },
+    onOther: async (m) => { outras.push(m) },
+  })
+  const conectando = wa.connect()
+  const sock = await aguardarSocket(sockets)
+  sock.ev.emit('connection.update', { connection: 'open' })
+  await conectando
+
+  sock.ev.emit('messages.upsert', {
+    type: 'notify',
+    messages: [
+      { key: { remoteJid: 'dono@s.whatsapp.net' }, message: { conversation: 'do dono' } },
+      { key: { remoteJid: 'outro@s.whatsapp.net' }, message: { conversation: 'de outro' }, pushName: 'Fulano' },
+      { key: { remoteJid: 'outro@s.whatsapp.net', fromMe: true }, message: { conversation: 'eco do próprio bot' } },
+    ],
+  })
+  sock.ev.emit('messages.upsert', { type: 'append', messages: [{ key: { remoteJid: 'outro@s.whatsapp.net' }, message: { conversation: 'histórico' } }] })
+  await new Promise((r) => setImmediate(r))
+
+  assert.deepEqual(aceitas, ['do dono'])
+  assert.equal(outras.length, 1, 'nem eco do bot nem histórico viram resposta repassada')
+  assert.equal(outras[0].text, 'de outro')
+  assert.equal(outras[0].pushName, 'Fulano')
+})
+
 test('sendText usa o socket atual e devolve o id da mensagem enviada', async () => {
   const { wa, sockets } = montarWhatsapp()
   const conectando = wa.connect()

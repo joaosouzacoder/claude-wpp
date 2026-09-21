@@ -47,6 +47,10 @@ const AJUDA = [
   '/schedulers — o que espera seu ok e o que está agendado',
   '/undo — apaga a última mensagem que mandei por você',
   '',
+  'Respostas ao bot:',
+  'citar uma resposta encaminhada — formalizo sua resposta e mando pelo bot',
+  '/r <n> <texto> — o mesmo, pelo número da resposta',
+  '',
   'Áudio vira texto e segue como se você tivesse digitado (comandos inclusive).',
   'Imagem vai junto do pedido; a legenda é o prompt.',
 ].join('\n')
@@ -80,7 +84,7 @@ function ociosidade(iso) {
   return `${Math.floor(min / 60)}h`
 }
 
-export function createHandler({ sessions, run, attach = null, transcribe, reply, replyFile = null, config, wpp = null, listAgents = null }) {
+export function createHandler({ sessions, run, attach = null, transcribe, reply, replyFile = null, config, wpp = null, listAgents = null, relay = null }) {
   // What /manuais last showed, so /importar <n> knows which session that
   // number meant. Only ever read right after a fresh /manuais.
   let sessoesManuais = []
@@ -415,6 +419,17 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
       return reply(`Esqueci o pedido interrompido de [${s.name}].`)
     },
 
+    // Same as quoting a relayed reply, for when quoting is not handy.
+    async r(args, rest) {
+      if (!relay) return reply('Encaminhamento de respostas não está ligado.')
+      const id = numeroDoRascunho(args[0])
+      const texto = rest.slice(String(args[0] ?? '').length).trim()
+      if (!id || !texto) return reply('Uso: /r <número> <sua resposta>')
+      const linha = relay.porNumero(id)
+      if (!linha) return reply(`Não achei a mensagem #${id}.`)
+      return responderRelay(linha, texto)
+    },
+
     async help() {
       return reply(AJUDA)
     },
@@ -528,8 +543,14 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
     }
   }
 
+  async function responderRelay(linha, texto) {
+    const r = await relay.answer(linha, texto)
+    if (!r.ok) return reply(`Não mandei: ${r.error}`)
+    return reply(`↪️ Mandei pelo bot para ${r.to}:\n\n${r.text}`)
+  }
+
   async function handle(entrada) {
-    const { text, media } = typeof entrada === 'string' ? { text: entrada, media: null } : (entrada ?? {})
+    const { text, media, raw } = typeof entrada === 'string' ? { text: entrada, media: null, raw: null } : (entrada ?? {})
 
     if (media?.tooLarge) {
       return reply(`O arquivo ${media.fileName ?? ''} tem ${Math.round(media.size / 1024 / 1024)} MB — acima do limite que eu baixo. Compacta ou manda um pedaço.`)
@@ -541,6 +562,11 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
       if (!r.ok) return reply(`Não consegui transcrever o áudio: ${r.error}`)
       texto = r.text
     }
+
+    // Quoting a relayed reply answers that person; it is not a request for
+    // Claude and never reaches a session.
+    const citada = relay?.porCitacao(raw?.message?.extendedTextMessage?.contextInfo?.stanzaId)
+    if (citada && texto?.trim()) return responderRelay(citada, texto.trim())
 
     const cmd = parse(texto)
 

@@ -460,6 +460,21 @@ sending immediately as the bot.
 for `/ok` on WhatsApp. It is how `agent/propose.mjs` works, and the only write
 path Claude is given.
 
+### Replies to the bot
+
+When someone the bot has written to — through `/send`, `/send-file` or a
+draft approved with `/bot` — answers it, you get their message in the bot's
+chat, numbered. Quote it (or send `/r <n> <text>`) to answer: your text,
+typed or dictated, is rewritten in formal Portuguese by Claude and sent from
+the bot's number right away, and the bot shows you what went out. If the
+rewrite fails, nothing is sent — your raw words never go out through the bot.
+
+Only people the bot has written to are relayed; anyone else writing to the
+bot is ignored, as before, and groups never are. Nothing on this path reaches
+a Claude session: a third party's text is only shown to you. A sender that
+arrives only as an `@lid`, without their number alongside, cannot be matched
+and is not relayed.
+
 ### Alerts: `POST /notify`
 
 A channel for other machines and scripts — CI, a deploy, a cron check — to

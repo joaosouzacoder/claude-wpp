@@ -9,8 +9,27 @@ import { createHandler } from '../src/handler.js'
 import { transcribe as transcribeReal } from '../src/transcribe.js'
 import { openDb } from '../src/db.js'
 import { createOutbox } from '../src/outbox.js'
+import { createRelay } from '../src/relay.js'
 
-function montar({ run, attach, transcribe, config, listAgents, replyFile } = {}) {
+// A real relay over a real db, with the two outside calls faked.
+async function relayComResposta() {
+  const enviados = []
+  const relay = createRelay({
+    db: openDb(':memory:'),
+    ownerNumber: '5511999999999',
+    notifyOwner: async () => 'OWNER-1',
+    sendAsBot: async (jid, texto) => { enviados.push({ jid, texto }) },
+    formalize: async () => 'Olá. Confirmado para amanhã.',
+    log: {},
+  })
+  relay.noteSent('5511911111111')
+  await relay.onOther({ key: { remoteJid: '5511911111111@s.whatsapp.net' }, kind: 'text', text: 'amanhã?' })
+  return { relay, enviados }
+}
+
+const citando = (stanzaId) => ({ message: { extendedTextMessage: { text: 'x', contextInfo: { stanzaId } } } })
+
+function montar({ run, attach, transcribe, config, listAgents, replyFile, relay } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'handler-'))
   const sessions = createSessions({ store: createStore(join(dir, 'state.json')), defaultCwd: dir })
   const ditos = []
@@ -22,6 +41,7 @@ function montar({ run, attach, transcribe, config, listAgents, replyFile } = {})
     reply: async (t) => { ditos.push(t) },
     replyFile,
     listAgents,
+    relay,
     config: {
       slowNoticeMs: 10,
       timeoutMs: 1000,
@@ -1232,4 +1252,31 @@ test('o heartbeat vira aviso de progresso, sem repetir "Trabalhando nisso."', as
   assert.equal(ditos[0], 'Trabalhando nisso.')
   assert.match(ditos[1], /ainda/i)
   assert.match(ditos[1], /5min/)
+})
+
+test('citar uma resposta encaminhada responde à pessoa e não chega ao Claude', async () => {
+  const { relay, enviados } = await relayComResposta()
+  let rodou = false
+  const { handler, ditos } = montar({ relay, run: async () => { rodou = true; return { ok: true, text: '', sessionId: null, error: null } } })
+  await handler.handle({ text: 'fechado', media: null, raw: citando('OWNER-1') })
+  assert.equal(rodou, false)
+  assert.deepEqual(enviados, [{ jid: '5511911111111@s.whatsapp.net', texto: 'Olá. Confirmado para amanhã.' }])
+  assert.match(ditos.at(-1), /Mandei pelo bot para 5511911111111/)
+  assert.match(ditos.at(-1), /Confirmado para amanhã/)
+})
+
+test('/r responde pelo número da mensagem encaminhada', async () => {
+  const { relay, enviados } = await relayComResposta()
+  const { handler } = montar({ relay })
+  await handler.handle('/r 1 fechado')
+  assert.equal(enviados.length, 1)
+})
+
+test('citar uma mensagem qualquer segue o caminho normal da sessão', async () => {
+  const { relay, enviados } = await relayComResposta()
+  let rodou = false
+  const { handler } = montar({ relay, run: async () => { rodou = true; return { ok: true, text: 'ok', sessionId: 's', error: null } } })
+  await handler.handle({ text: 'e isso?', media: null, raw: citando('OUTRA-MSG') })
+  assert.equal(rodou, true)
+  assert.equal(enviados.length, 0)
 })

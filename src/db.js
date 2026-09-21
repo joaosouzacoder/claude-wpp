@@ -60,6 +60,25 @@ const ESQUEMA = [
    )`,
 
   'CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox(status, scheduled_for)',
+
+  // Who the bot has written to. Only these get their replies passed on to the
+  // owner: anyone else messaging the bot is ignored, as before.
+  `CREATE TABLE IF NOT EXISTS bot_contacts (
+     number       TEXT PRIMARY KEY,
+     name         TEXT,
+     last_sent_at INTEGER NOT NULL
+   )`,
+
+  // A reply the bot passed on to the owner, keyed by the id of the message he
+  // sees — quoting that message is how he answers the right person.
+  `CREATE TABLE IF NOT EXISTS relay (
+     id              INTEGER PRIMARY KEY,
+     owner_wa_id     TEXT UNIQUE,
+     from_number     TEXT NOT NULL,
+     from_name       TEXT,
+     body            TEXT NOT NULL,
+     received_at     INTEGER NOT NULL
+   )`,
 ]
 
 export function openDb(filePath) {

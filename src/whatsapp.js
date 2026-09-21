@@ -112,6 +112,9 @@ export function createWhatsapp({
   mediaDir,
   onMessage,
   accept = () => false,
+  // Messages `accept` refused. They never reach onMessage — the only path to
+  // Claude — so this can only ever relay text, not act on it.
+  onOther = null,
   downloadMedia = true,
   onHistory,
   onChats,
@@ -245,7 +248,13 @@ export function createWhatsapp({
       if (type !== 'notify' && type !== 'append') return
       for (const msg of messages) {
         try {
-          if (!accept(msg.key, msg)) continue
+          if (!accept(msg.key, msg)) {
+            if (onOther && !msg.key?.fromMe && type === 'notify') {
+              const { kind, text } = classificar(msg)
+              await onOther({ key: msg.key, kind, text: text.trim(), pushName: msg.pushName ?? null })
+            }
+            continue
+          }
 
           if (!downloadMedia) {
             await onMessage({ raw: msg })

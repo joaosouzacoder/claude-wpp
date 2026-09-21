@@ -12,6 +12,12 @@ import { contaPessoalPareada, montarContaPessoal } from './boot.js'
 import { limparMediaAntiga } from './media.js'
 import { createNotifier } from './notify.js'
 import { createContactResolver } from './contacts.js'
+import { createRelay } from './relay.js'
+import { openDb } from './db.js'
+import { mkdirSync } from 'node:fs'
+
+// Rewriting one short reply formally; past this, the owner is told it was not sent.
+const FORMALIZAR_TIMEOUT_MS = 3 * 60 * 1000
 
 const log = {
   info: (m) => console.log(`[info] ${m}`),
@@ -50,16 +56,54 @@ async function main() {
         avisar('Deu um erro inesperado processando sua mensagem. Tenta de novo.').catch(() => {})
       })
     },
+    // Replies from people the bot wrote to are relayed to the owner; nothing
+    // from anyone else reaches the handler.
+    onOther: (m) => (relay ? relay.onOther(m).catch((e) => log.error(`[relay] ${e.stack ?? e.message}`)) : undefined),
     label: 'bot',
     log,
   })
 
-  const avisar = (texto) => whatsapp.sendText(config.authorizedNumber, texto)
+  const relayDb = openDb(config.dbPath)
+  const dirFormal = join(config.stateDir, 'formal')
+  mkdirSync(dirFormal, { recursive: true })
+  let relay = null
+
+  // Every send the bot makes goes through here, so whoever it writes to —
+  // through the API, a /bot draft, an attachment — is someone whose reply
+  // will be relayed.
+  const bot = {
+    ...whatsapp,
+    async sendText(destino, texto, opts) {
+      const id = await whatsapp.sendText(destino, texto, opts)
+      relay?.noteSent(destino)
+      return id
+    },
+    async sendDocument(destino, doc) {
+      const id = await whatsapp.sendDocument(destino, doc)
+      relay?.noteSent(destino)
+      return id
+    },
+  }
+
+  const avisar = (texto) => bot.sendText(config.authorizedNumber, texto)
+
+  relay = createRelay({
+    db: relayDb,
+    ownerNumber: config.authorizedNumber,
+    notifyOwner: avisar,
+    sendAsBot: (destino, texto) => bot.sendText(destino, texto),
+    formalize: async (prompt) => {
+      const r = await runClaude({ bin: config.claudeBin, cwd: dirFormal, prompt, timeoutMs: FORMALIZAR_TIMEOUT_MS })
+      if (!r.ok) throw new Error(r.error ?? 'o claude falhou sem descrição')
+      return r.text
+    },
+    log,
+  })
 
   log.info(`${sessions.list().length} sessão(ões) recuperada(s) do estado.`)
   await whatsapp.connect()
 
-  let pessoal = contaPessoalPareada(config) ? montarContaPessoal(config, avisar, log, whatsapp) : null
+  let pessoal = contaPessoalPareada(config) ? montarContaPessoal(config, avisar, log, bot) : null
   if (!pessoal && config.personalNumber) {
     log.warn('conta pessoal configurada mas não pareada — rode `npm run pair:me`.')
   }
@@ -89,6 +133,7 @@ async function main() {
     replyFile: (documento) => whatsapp.sendDocument(config.authorizedNumber, documento),
     config,
     listAgents,
+    relay,
     wpp: pessoal && {
       outbox: pessoal.outbox,
       agentCwd: config.agentCwd,
@@ -106,7 +151,7 @@ async function main() {
     host: config.apiHost,
     port: config.apiPort,
     token: config.apiToken,
-    whatsapp,
+    whatsapp: bot,
     sessionCount: () => sessions.list().length,
     outbox: pessoal?.outbox ?? null,
     onDraft: pessoal ? (job) => avisar(formatDraft(job, config.timezone)) : null,
