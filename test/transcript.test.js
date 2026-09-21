@@ -14,8 +14,8 @@ function linha(obj) {
 }
 
 test('transcriptPath troca cada caractere não alfanumérico do cwd por hífen', () => {
-  const p = transcriptPath('/home/joao/.claude/proj', 'sid-1', { home: '/home/joao' })
-  assert.equal(p, '/home/joao/.claude/projects/-home-joao--claude-proj/sid-1.jsonl')
+  const p = transcriptPath('/home/user/.claude/proj', 'sid-1', { home: '/home/user' })
+  assert.equal(p, '/home/user/.claude/projects/-home-user--claude-proj/sid-1.jsonl')
 })
 
 test('devolve o último texto do assistente com o timestamp gravado', async () => {
