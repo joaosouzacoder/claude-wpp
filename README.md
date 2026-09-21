@@ -496,6 +496,28 @@ State lives in `~/.local/state/claude-wpp/`. The conversation history belongs to
 Claude Code, under `~/.claude/projects/` — restarting the service loses no
 session.
 
+### Knowing when the bot itself is down
+
+When the bot's WhatsApp is down, WhatsApp cannot tell you so. A separate
+systemd timer (`claude-wpp-health.timer`, installed and enabled by
+`./install.sh`) checks `/healthz` every 2 minutes and alerts through
+[ntfy](https://ntfy.sh) instead: set `ntfyTopic` in `config.json` and subscribe
+to that topic in the ntfy app. Without it, the check does nothing.
+
+It alerts once when the bot has been unreachable — API down, or its WhatsApp
+not `open` — for two checks in a row (a single failed look is usually just a
+reconnect), and once more when it is back. An alert that could not be
+delivered is retried on the next check.
+
+```bash
+systemctl --user list-timers claude-wpp-health.timer
+journalctl --user -u claude-wpp-health -n 20
+```
+
+| Key | Default | What it does |
+|---|---|---|
+| `ntfyTopic` | `null` | ntfy.sh topic for "bot down" / "bot back" alerts; off while unset |
+
 ## Tests
 
 ```bash

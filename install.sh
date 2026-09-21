@@ -11,8 +11,11 @@ fi
 
 mkdir -p "$(dirname "$UNIDADE")"
 cp "$RAIZ/systemd/claude-wpp.service" "$UNIDADE"
+cp "$RAIZ/systemd/claude-wpp-health.service" "$(dirname "$UNIDADE")/"
+cp "$RAIZ/systemd/claude-wpp-health.timer" "$(dirname "$UNIDADE")/"
 systemctl --user daemon-reload
 systemctl --user enable claude-wpp.service
+systemctl --user enable --now claude-wpp-health.timer
 
 echo
 echo "Unidade instalada em $UNIDADE"
