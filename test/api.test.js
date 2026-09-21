@@ -4,6 +4,11 @@ import { createApi, mimetypeDe, decodificarBase64, nomeDeArquivoValido } from '.
 import { openDb } from '../src/db.js'
 import { createOutbox } from '../src/outbox.js'
 import { createNotifier } from '../src/notify.js'
+import { createCapture } from '../src/capture.js'
+import { createContactResolver } from '../src/contacts.js'
+import { mkdtempSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 const enviados = []
 const documentos = []
@@ -386,4 +391,70 @@ test('nomeDeArquivoValido só aceita nome, nunca caminho', () => {
   assert.equal(nomeDeArquivoValido('relatório final.pdf'), true)
   assert.equal(nomeDeArquivoValido('a/b.pdf'), false)
   assert.equal(nomeDeArquivoValido('x'.repeat(201)), false)
+})
+
+async function subirComAgenda() {
+  const db = openDb(join(mkdtempSync(join(tmpdir(), 'api-contatos-')), 'wpp.db'))
+  const capture = createCapture({ db })
+  capture.rememberChat({ jid: '5511911111111@s.whatsapp.net', name: 'Fulano Bailāo', kind: 'dm' })
+  capture.rememberChat({ jid: '5511922222222@s.whatsapp.net', name: 'Fulano Peters', kind: 'dm' })
+  const texto = []
+  const docs = []
+  const wa = {
+    sendText: async (to, text) => { texto.push({ to, text }) },
+    sendDocument: async (to, doc) => { docs.push({ to, ...doc }) },
+    state: () => 'open',
+  }
+  const servidor = createApi({ host: '127.0.0.1', port: 0, token: 'segredo', whatsapp: wa, contacts: createContactResolver(db) })
+  const url = `http://127.0.0.1:${await servidor.listen()}`
+  const post = (rota, corpo) => fetch(`${url}${rota}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer segredo' },
+    body: JSON.stringify(corpo),
+  })
+  return { servidor, post, texto, docs }
+}
+
+test('send-file por nome resolve o contato e diz para quem foi', async () => {
+  const { servidor, post, docs } = await subirComAgenda()
+  const r = await post('/send-file', { to: 'fulano bailão', fileName: 'handoff.md', content: 'b2k=' })
+  assert.equal(r.status, 200)
+  assert.deepEqual(await r.json(), { ok: true, bytes: 2, to: 'Fulano Bailāo' })
+  assert.equal(docs.at(-1).to, '5511911111111@s.whatsapp.net')
+  await servidor.close()
+})
+
+test('send por nome também resolve', async () => {
+  const { servidor, post, texto } = await subirComAgenda()
+  const r = await post('/send', { to: 'Peters', text: 'oi' })
+  assert.deepEqual(await r.json(), { ok: true, to: 'Fulano Peters' })
+  assert.equal(texto.at(-1).to, '5511922222222@s.whatsapp.net')
+  await servidor.close()
+})
+
+test('nome ambíguo é 409 com os candidatos, e nada sai', async () => {
+  const { servidor, post, docs } = await subirComAgenda()
+  const r = await post('/send-file', { to: 'Fulano', fileName: 'a.txt', content: 'b2k=' })
+  assert.equal(r.status, 409)
+  assert.deepEqual((await r.json()).candidates.sort(), ['Fulano Bailāo', 'Fulano Peters'])
+  assert.equal(docs.length, 0)
+  await servidor.close()
+})
+
+test('nome que não existe é 404, e nada sai', async () => {
+  const { servidor, post, texto } = await subirComAgenda()
+  const r = await post('/send', { to: 'Beltrano', text: 'oi' })
+  assert.equal(r.status, 404)
+  assert.equal(texto.length, 0)
+  await servidor.close()
+})
+
+test('nome sem conta pessoal configurada explica que precisa do número', async () => {
+  const r = await fetch(`${base}/send`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer segredo' },
+    body: JSON.stringify({ to: 'Fulano', text: 'oi' }),
+  })
+  assert.equal(r.status, 400)
+  assert.match((await r.json()).error, /conta pessoal/)
 })

@@ -11,6 +11,7 @@ import { formatDraft } from './wpp.js'
 import { contaPessoalPareada, montarContaPessoal } from './boot.js'
 import { limparMediaAntiga } from './media.js'
 import { createNotifier } from './notify.js'
+import { createContactResolver } from './contacts.js'
 
 const log = {
   info: (m) => console.log(`[info] ${m}`),
@@ -118,6 +119,7 @@ async function main() {
       : null,
     personalState: pessoal ? () => pessoal.me.state() : null,
     notifier: createNotifier({ send: avisar, dedupMs: config.notifyDedupMs }),
+    contacts: pessoal ? createContactResolver(pessoal.db) : null,
   })
 
   for (const sinal of ['SIGINT', 'SIGTERM']) {

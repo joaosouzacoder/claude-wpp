@@ -1,6 +1,7 @@
 import { createServer } from 'node:http'
 import { timingSafeEqual } from 'node:crypto'
 import { mimetypeDe } from './mimetypes.js'
+import { pareceNumero } from './contacts.js'
 
 export { mimetypeDe }
 
@@ -68,11 +69,27 @@ export function createApi({
   onWpp = null,
   personalState = null,
   notifier = null,
+  contacts = null,
 }) {
   const json = (res, status, corpo) => {
     const texto = JSON.stringify(corpo)
     res.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(texto) })
     res.end(texto)
+  }
+
+  // `to` is a number or a contact name. A name is resolved against the
+  // personal account's chats and only ever to exactly one of them: a guess
+  // would deliver to the wrong person, so ambiguity comes back as candidates
+  // for the caller to narrow down.
+  const resolverDestino = (to) => {
+    if (pareceNumero(to)) return { destino: String(to) }
+    if (!contacts) return { erro: [400, { ok: false, error: 'para mandar por nome, a conta pessoal precisa estar pareada; passe o número' }] }
+    const r = contacts.resolve(String(to))
+    if (r.ok) return { destino: r.jid, nome: r.name }
+    if (r.motivo === 'ambiguo') {
+      return { erro: [409, { ok: false, error: `"${to}" bate com mais de um contato; seja mais específico`, candidates: r.candidatos }] }
+    }
+    return { erro: [404, { ok: false, error: `não achei nenhum contato chamado "${to}"` }] }
   }
 
   const server = createServer(async (req, res) => {
@@ -193,9 +210,11 @@ export function createApi({
       if (!nomeDeArquivoValido(fileName)) return json(res, 400, { ok: false, error: 'fileName inválido: um nome de arquivo, sem caminho' })
       const bytes = decodificarBase64(content)
       if (!bytes) return json(res, 400, { ok: false, error: 'content tem que ser o arquivo em base64' })
+      const alvo = resolverDestino(to)
+      if (alvo.erro) return json(res, ...alvo.erro)
 
       try {
-        await whatsapp.sendDocument(String(to), {
+        await whatsapp.sendDocument(alvo.destino, {
           content: bytes,
           fileName,
           caption: typeof caption === 'string' && caption ? caption : undefined,
@@ -204,7 +223,7 @@ export function createApi({
       } catch (err) {
         return json(res, 502, { ok: false, error: err.message })
       }
-      return json(res, 200, { ok: true, bytes: bytes.length })
+      return json(res, 200, { ok: true, bytes: bytes.length, ...(alvo.nome ? { to: alvo.nome } : {}) })
     }
 
     if (url.pathname === '/send') {
@@ -220,13 +239,15 @@ export function createApi({
 
       const { to, text } = corpo ?? {}
       if (!to || !text) return json(res, 400, { ok: false, error: 'to e text são obrigatórios' })
+      const alvo = resolverDestino(to)
+      if (alvo.erro) return json(res, ...alvo.erro)
 
       try {
-        await whatsapp.sendText(String(to), String(text))
+        await whatsapp.sendText(alvo.destino, String(text))
       } catch (err) {
         return json(res, 502, { ok: false, error: err.message })
       }
-      return json(res, 200, { ok: true })
+      return json(res, 200, { ok: true, ...(alvo.nome ? { to: alvo.nome } : {}) })
     }
 
     return json(res, 404, { ok: false, error: 'não encontrado' })
