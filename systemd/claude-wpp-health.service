@@ -1,0 +1,12 @@
+[Unit]
+Description=claude-wpp — health check, alerts via ntfy when the bot is down
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/claude-wpp
+Environment=HOME=%h
+Environment=NODE_ENV=production
+EnvironmentFile=-%h/.tokens
+ExecStart=%h/.asdf/installs/nodejs/24.15.0/bin/node %h/claude-wpp/src/health-check.js
+# A hung check must not stack up behind the next tick.
+TimeoutStartSec=60

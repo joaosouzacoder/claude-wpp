@@ -24,6 +24,9 @@ const DEFAULTS = {
   // POST /notify with a `key`: repeats of that key inside this window are
   // dropped, so a check that fails every minute pings once, not sixty times.
   notifyDedupMs: 10 * 60 * 1000,
+  // ntfy.sh topic the health check alerts on when the bot itself is down
+  // (WhatsApp cannot report its own outage). Unset, the check does nothing.
+  ntfyTopic: null,
   openaiApiKey: null,
   transcribeModel: 'gpt-4o-transcribe',
   transcribeTimeoutMs: 120000,

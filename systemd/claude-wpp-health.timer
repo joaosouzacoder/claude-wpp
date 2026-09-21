@@ -1,0 +1,10 @@
+[Unit]
+Description=claude-wpp — run the health check every 2 minutes
+
+[Timer]
+# Give the bot time to connect after boot before the first look.
+OnBootSec=3min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target
