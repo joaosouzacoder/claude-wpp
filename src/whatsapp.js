@@ -279,13 +279,24 @@ export function createWhatsapp({
     return r?.key?.id ?? null
   }
 
+  async function sendDocument(destino, { content, fileName, caption }) {
+    if (!sock) throw new Error('WhatsApp não está conectado')
+    const r = await sock.sendMessage(jidDe(destino), {
+      document: Buffer.from(content, 'utf8'),
+      mimetype: 'text/plain',
+      fileName,
+      caption,
+    })
+    return r?.key?.id ?? null
+  }
+
   async function deleteMessage(destino, waId) {
     if (!sock) throw new Error('WhatsApp não está conectado')
     const jid = jidDe(destino)
     await sock.sendMessage(jid, { delete: { remoteJid: jid, fromMe: true, id: waId } })
   }
 
-  return { connect, sendText, deleteMessage, state: () => estado }
+  return { connect, sendText, sendDocument, deleteMessage, state: () => estado }
 }
 
 function contatoComoChat(c) {

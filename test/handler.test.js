@@ -10,7 +10,7 @@ import { transcribe as transcribeReal } from '../src/transcribe.js'
 import { openDb } from '../src/db.js'
 import { createOutbox } from '../src/outbox.js'
 
-function montar({ run, attach, transcribe, config, listAgents } = {}) {
+function montar({ run, attach, transcribe, config, listAgents, replyFile } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'handler-'))
   const sessions = createSessions({ store: createStore(join(dir, 'state.json')), defaultCwd: dir })
   const ditos = []
@@ -20,6 +20,7 @@ function montar({ run, attach, transcribe, config, listAgents } = {}) {
     attach,
     transcribe: transcribe ?? (async () => ({ ok: true, text: 'transcrição do áudio', error: null })),
     reply: async (t) => { ditos.push(t) },
+    replyFile,
     listAgents,
     config: {
       slowNoticeMs: 10,
@@ -900,6 +901,51 @@ test('recuperar() não confia numa listagem que falhou: pergunta em vez de reane
   await handler.recuperar()
   assert.equal(anexou, false)
   assert.match(ditos.join('\n'), /\/retomar api/)
+})
+
+test('resposta longa vai como anexo com a prévia na legenda, não como uma fila de balões', async () => {
+  const longa = Array.from({ length: 40 }, (_, i) => `linha ${i} ${'x'.repeat(20)}`).join('\n')
+  const anexos = []
+  const { handler, ditos } = montar({
+    run: async () => ({ ok: true, text: longa, sessionId: 'sid-1', error: null }),
+    replyFile: async (doc) => { anexos.push(doc) },
+    config: { attachAboveChars: 200, slowNoticeMs: 10_000 },
+  })
+
+  await handler.handle('/new . api')
+  ditos.length = 0
+  await handler.handle('me dá o relatório')
+
+  assert.equal(anexos.length, 1)
+  assert.equal(anexos[0].content, longa, 'o anexo leva a resposta inteira, sem cortes')
+  assert.equal(anexos[0].fileName, 'api.txt')
+  assert.match(anexos[0].caption, /^\[api\] linha 0/)
+  assert.match(anexos[0].caption, new RegExp(`${longa.length} caracteres`))
+  assert.deepEqual(ditos, [], 'nenhum balão de texto além do anexo')
+})
+
+test('resposta curta continua indo como texto, sem anexo', async () => {
+  const anexos = []
+  const { handler, ditos } = montar({
+    replyFile: async (doc) => { anexos.push(doc) },
+    config: { attachAboveChars: 200, slowNoticeMs: 10_000 },
+  })
+  await handler.handle('oi')
+  assert.equal(anexos.length, 0)
+  assert.ok(ditos.some((t) => t.includes('resposta')))
+})
+
+test('anexo que falha ao sair cai para os balões de texto: a resposta nunca se perde', async () => {
+  const longa = Array.from({ length: 40 }, (_, i) => `linha ${i}`).join('\n')
+  const { handler, ditos } = montar({
+    run: async () => ({ ok: true, text: longa, sessionId: 'sid-1', error: null }),
+    replyFile: async () => { throw new Error('upload recusado') },
+    config: { attachAboveChars: 100, maxMessageChars: 3500, slowNoticeMs: 10_000 },
+  })
+  await handler.handle('me dá o relatório')
+  const tudo = ditos.join('\n')
+  assert.match(tudo, /linha 0/)
+  assert.match(tudo, /linha 39/)
 })
 
 test('recuperar() fica calado quando nada morreu no meio', async () => {

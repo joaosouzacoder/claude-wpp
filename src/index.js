@@ -84,6 +84,7 @@ async function main() {
     attach: attachClaude,
     transcribe,
     reply: avisar,
+    replyFile: (documento) => whatsapp.sendDocument(config.authorizedNumber, documento),
     config,
     listAgents,
     wpp: pessoal && {
