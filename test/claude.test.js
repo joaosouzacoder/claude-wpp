@@ -661,3 +661,37 @@ test('attach também para o agente certo no /stop', async () => {
   assert.equal(r.error, 'Interrompido.')
   assert.ok(paradas.includes('abc12345'))
 })
+
+// Recorded in production for a turn carrying an image: the agent spends its
+// first ~13s starting up reported as no-status/idle with `state: working`,
+// and only then flips to busy. Taking those looks as "quiet" ended the poll
+// before the turn had begun, and the reply was never read.
+test('agente ainda subindo (state working sem busy) não é tratado como terminado', async () => {
+  const linhaDoTempo = [
+    { status: undefined, state: 'working' },
+    { status: 'idle', state: 'working' },
+    { status: 'idle', state: 'working' },
+    { status: 'idle', state: 'working' },
+    { status: 'idle', state: 'working' },
+    { status: 'busy', state: 'working' },
+    { status: 'busy', state: 'working' },
+    { status: 'idle', state: 'done' },
+  ]
+  let olhada = 0
+  let respondeu = false
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: () => {
+        const agora = linhaDoTempo[Math.min(olhada, linhaDoTempo.length - 1)]
+        olhada += 1
+        if (agora.state === 'done') respondeu = true
+        return { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', ...agora }]) }
+      },
+    },
+    readReply: () => (respondeu ? { content: 'um homem com uma cobra', timestamp: new Date(2_000_000).toISOString() } : null),
+  })
+
+  const r = await claude.run({ ...base })
+  assert.deepEqual(r, { ok: true, text: 'um homem com uma cobra', sessionId: 'sid-1', error: null })
+})

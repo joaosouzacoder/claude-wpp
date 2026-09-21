@@ -1,5 +1,6 @@
 import { rmSync } from 'node:fs'
 import { parse } from './router.js'
+import { emAndamento } from './claude.js'
 import { chunkText } from './text.js'
 import { promptComImagem } from './media.js'
 import { formatDraft, formatQueue } from './wpp.js'
@@ -184,15 +185,15 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
     await executar(sessao, prompt)
   }
 
-  // Only `busy` and `blocked` mean the turn is still going. Anything else —
-  // gone from the listing, idle, failed, or a listing that could not be read —
-  // falls through to asking you, which is the safe side: nothing re-runs on
-  // its own.
+  // Only a turn in progress (starting up included) or `blocked` means it is
+  // still going. Anything else — gone from the listing, done, failed, or a
+  // listing that could not be read — falls through to asking you, which is
+  // the safe side: nothing re-runs on its own.
   async function agenteVivo(bgId) {
     if (!bgId || !attach || !listAgents) return false
     const lista = await listAgents(config.claudeBin).catch(() => null)
     const estado = lista?.find((a) => a.id === bgId)
-    return estado?.status === 'busy' || estado?.state === 'blocked'
+    return emAndamento(estado) || estado?.state === 'blocked'
   }
 
   // Every acknowledged request owes a terminal answer. A run killed with the
