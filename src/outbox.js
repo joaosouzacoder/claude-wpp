@@ -13,8 +13,8 @@ export function createOutbox({ db, now = () => Math.floor(Date.now() / 1000) }) 
     insert: db.prepare(`
       INSERT INTO outbox (kind, chat_jid, chat_name, body, quoted_wa_id, check_prompt,
                           scheduled_for, status, created_at,
-                          attachment_path, attachment_name, attachment_mimetype)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+                          attachment_path, attachment_name, attachment_mimetype, body_bot)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
     `),
     aprovar: db.prepare("UPDATE outbox SET status = 'approved', decided_at = ?, sender = ? WHERE id = ? AND status = 'pending'"),
     get: db.prepare('SELECT * FROM outbox WHERE id = ?'),
@@ -40,10 +40,13 @@ export function createOutbox({ db, now = () => Math.floor(Date.now() / 1000) }) 
     stuckSending: db.prepare("SELECT * FROM outbox WHERE status = 'sending' ORDER BY id"),
     sent: db.prepare("UPDATE outbox SET status = 'sent', sent_at = ?, sent_wa_id = ? WHERE id = ? AND status = ?"),
     encerrar: db.prepare('UPDATE outbox SET status = ?, reason = ? WHERE id = ? AND status = ?'),
+    // The formal version was written from the old wording; keeping it would
+    // let /bot send content the owner just changed.
     editar: db.prepare(`
-      UPDATE outbox SET body = ?, status = 'pending', decided_at = NULL
+      UPDATE outbox SET body = ?, body_bot = NULL, status = 'pending', decided_at = NULL
       WHERE id = ? AND status IN ('pending', 'approved')
     `),
+    formalizado: db.prepare("UPDATE outbox SET body_bot = ? WHERE id = ? AND status = 'pending'"),
   }
 
   // A transition only fires from the state it is allowed to leave, so a repeated
@@ -56,7 +59,9 @@ export function createOutbox({ db, now = () => Math.floor(Date.now() / 1000) }) 
   return {
     // `attachment` ({ path, name, mimetype }) makes it a file draft; the text
     // then becomes its caption and may be empty.
-    create({ kind = 'message', chatJid, chatName = null, body, quotedWaId = null, checkPrompt = null, scheduledFor = null, attachment = null } = {}) {
+    // `bodyBot` is the formal wording /bot sends instead of `body`; without it
+    // /bot sends `body` as is.
+    create({ kind = 'message', chatJid, chatName = null, body, bodyBot = null, quotedWaId = null, checkPrompt = null, scheduledFor = null, attachment = null } = {}) {
       if (!TIPOS.has(kind)) throw new Error(`tipo de tarefa desconhecido: ${kind}`)
       if (!String(chatJid ?? '').trim()) throw new Error('rascunho sem destino')
       if (!attachment && !String(body ?? '').trim()) throw new Error('rascunho sem texto')
@@ -68,6 +73,7 @@ export function createOutbox({ db, now = () => Math.floor(Date.now() / 1000) }) 
       const { lastInsertRowid } = stmt.insert.run(
         kind, chatJid, chatName, String(body ?? '').trim(), quotedWaId, checkPrompt, scheduledFor, now(),
         attachment?.path ?? null, attachment?.name ?? null, attachment?.mimetype ?? null,
+        String(bodyBot ?? '').trim() || null,
       )
       return stmt.get.get(lastInsertRowid)
     },
@@ -89,6 +95,11 @@ export function createOutbox({ db, now = () => Math.floor(Date.now() / 1000) }) 
     // Changing the words of something already approved would let a text nobody
     // agreed to go out under an old approval. So an edit always lands back in
     // `pending`, and the owner approves the new wording or does not.
+    setBodyBot(id, texto) {
+      const { changes } = stmt.formalizado.run(String(texto ?? '').trim() || null, id)
+      return changes > 0 ? stmt.get.get(id) : null
+    },
+
     edit(id, body) {
       if (!String(body ?? '').trim()) throw new Error('edição sem texto')
       const { changes } = stmt.editar.run(String(body).trim(), id)

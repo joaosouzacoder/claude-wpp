@@ -18,17 +18,20 @@ function descreverMidia(kind) {
 }
 
 // What the formalizer must answer with: the message and nothing else.
-export function promptFormal({ nome, recebida, resposta }) {
+// Also used for a draft /bot sends without a formal version of its own, in
+// which case there is no incoming message to answer.
+export function promptFormal({ nome, recebida = null, resposta }) {
+  const contexto = recebida
+    ? [`Mensagem que ${nome ?? 'a pessoa'} mandou:`, `"${recebida}"`, '']
+    : []
   return [
-    'Reescreva a resposta abaixo em português formal e cordial, como uma mensagem de WhatsApp',
-    'enviada em nome do João por um assistente. Mantenha exatamente o conteúdo, os fatos e os',
-    'compromissos — não acrescente nem retire informação, não invente saudações longas.',
-    'Responda SOMENTE com o texto final da mensagem, sem aspas e sem comentários.',
+    'Reescreva a mensagem abaixo em português formal e cordial, como uma mensagem de WhatsApp',
+    `enviada em nome do João por um assistente${nome ? `, para ${nome}` : ''}. Mantenha exatamente o`,
+    'conteúdo, os fatos e os compromissos — não acrescente nem retire informação, não invente',
+    'saudações longas. Responda SOMENTE com o texto final da mensagem, sem aspas e sem comentários.',
     '',
-    `Mensagem que ${nome ?? 'a pessoa'} mandou:`,
-    recebida ? `"${recebida}"` : '(não disponível)',
-    '',
-    'Resposta do João, a reescrever:',
+    ...contexto,
+    'Mensagem do João, a reescrever:',
     `"${resposta}"`,
   ].join('\n')
 }

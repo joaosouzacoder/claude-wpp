@@ -12,7 +12,7 @@ import { contaPessoalPareada, montarContaPessoal } from './boot.js'
 import { limparMediaAntiga } from './media.js'
 import { createNotifier } from './notify.js'
 import { createContactResolver } from './contacts.js'
-import { createRelay } from './relay.js'
+import { createRelay, promptFormal, limparFormal } from './relay.js'
 import { openDb } from './db.js'
 import { mkdirSync } from 'node:fs'
 
@@ -87,16 +87,20 @@ async function main() {
 
   const avisar = (texto) => bot.sendText(config.authorizedNumber, texto)
 
+  // One rewrite into formal Portuguese, for everything that goes out through
+  // the bot: relayed answers and drafts approved with /bot.
+  const formalizarComClaude = async (prompt) => {
+    const r = await runClaude({ bin: config.claudeBin, cwd: dirFormal, prompt, timeoutMs: FORMALIZAR_TIMEOUT_MS })
+    if (!r.ok) throw new Error(r.error ?? 'o claude falhou sem descrição')
+    return r.text
+  }
+
   relay = createRelay({
     db: relayDb,
     ownerNumber: config.authorizedNumber,
     notifyOwner: avisar,
     sendAsBot: (destino, texto) => bot.sendText(destino, texto),
-    formalize: async (prompt) => {
-      const r = await runClaude({ bin: config.claudeBin, cwd: dirFormal, prompt, timeoutMs: FORMALIZAR_TIMEOUT_MS })
-      if (!r.ok) throw new Error(r.error ?? 'o claude falhou sem descrição')
-      return r.text
-    },
+    formalize: formalizarComClaude,
     log,
   })
 
@@ -140,6 +144,7 @@ async function main() {
       tick: pessoal.scheduler.tick,
       timezone: config.timezone,
       undo: pessoal.wpp.undo,
+      formalizar: async ({ nome, texto }) => limparFormal(await formalizarComClaude(promptFormal({ nome, resposta: texto }))),
     },
   })
 

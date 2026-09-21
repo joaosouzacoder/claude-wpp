@@ -104,7 +104,29 @@ test('o rascunho oferece as duas saídas e mostra o anexo', () => {
   const d = outbox.create({ chatJid: 'x@s.whatsapp.net', chatName: 'Fulano', body: '', attachment: { path: '/tmp/a', name: 'handoff.md', mimetype: 'text/markdown' } })
   const texto = formatDraft(d)
   assert.match(texto, /📎 handoff\.md/)
-  assert.match(texto, new RegExp(`/ok ${d.id} manda como você · /bot ${d.id} manda pelo bot · /no ${d.id} descarta`))
+  assert.match(texto, new RegExp(`/ok ${d.id} manda como você · /bot ${d.id} formaliza e manda pelo bot`))
+  assert.match(texto, new RegExp(`/no ${d.id} descarta`))
+})
+
+test('rascunho com as duas versões mostra cada uma junto do comando que a manda', () => {
+  const { outbox } = montar()
+  const d = outbox.create({ chatJid: 'x@s.whatsapp.net', chatName: 'Fulano', body: 'fala ju, segue', bodyBot: 'Olá, Juliano. Segue em anexo.' })
+  const linhas = formatDraft(d).split('\n')
+  const ok = linhas.indexOf(`/ok ${d.id} — como você:`)
+  const bot = linhas.indexOf(`/bot ${d.id} — pelo bot:`)
+  assert.equal(linhas[ok + 1], '"fala ju, segue"')
+  assert.equal(linhas[bot + 1], '"Olá, Juliano. Segue em anexo."')
+})
+
+test('/bot manda a versão formal; /ok a do dono', async () => {
+  const { outbox, scheduler, eu, bot } = montar()
+  const a = outbox.create({ chatJid: '5511911111111@s.whatsapp.net', body: 'fala ju', bodyBot: 'Olá, Juliano.' })
+  const b = outbox.create({ chatJid: '5511911111111@s.whatsapp.net', body: 'fala ju', bodyBot: 'Olá, Juliano.' })
+  outbox.approve(a.id, 'bot')
+  outbox.approve(b.id, 'me')
+  await scheduler.tick()
+  assert.equal(bot.feitos[0].texto, 'Olá, Juliano.')
+  assert.equal(eu.feitos[0].texto, 'fala ju')
 })
 
 test('banco antigo ganha as colunas novas, e o que já existia continua saindo como o dono', () => {
