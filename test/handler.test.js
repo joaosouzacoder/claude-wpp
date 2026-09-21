@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createStore } from '../src/store.js'
@@ -241,6 +241,75 @@ test('/use com nome desconhecido avisa', async () => {
   const { handler, ditos } = montar()
   await handler.handle('/use fantasma')
   assert.match(ditos.at(-1), /fantasma/)
+})
+
+test('/cd muda a pasta da sessão ativa, a partir da pasta atual, e zera a conversa', async () => {
+  const { handler, sessions, ditos, dir } = montar()
+  mkdirSync(join(dir, 'sub dir'))
+  await handler.handle(`/new ${dir} api`)
+  sessions.get('api').claudeSessionId = 'sid-antigo'
+
+  await handler.handle('/cd sub dir')
+  const s = sessions.get('api')
+  assert.equal(s.cwd, join(dir, 'sub dir'), 'caminho relativo resolve a partir da pasta da sessão, com espaço')
+  assert.equal(s.claudeSessionId, null, 'o histórico do Claude é por pasta: a conversa recomeça')
+  assert.match(ditos.at(-1), /recomeça/)
+
+  await handler.handle('/cd ..')
+  assert.equal(sessions.get('api').cwd, dir)
+})
+
+test('/cd para a mesma pasta não joga a conversa fora', async () => {
+  const { handler, sessions, ditos, dir } = montar()
+  await handler.handle(`/new ${dir} api`)
+  sessions.get('api').claudeSessionId = 'sid-1'
+  await handler.handle('/cd .')
+  assert.equal(sessions.get('api').claudeSessionId, 'sid-1')
+  assert.match(ditos.at(-1), /já está/)
+})
+
+test('/cd para pasta que não existe explica e não mexe na sessão', async () => {
+  const { handler, sessions, ditos, dir } = montar()
+  await handler.handle(`/new ${dir} api`)
+  await handler.handle('/cd nao-existe')
+  assert.equal(sessions.get('api').cwd, dir)
+  assert.match(ditos.at(-1), /não existe/)
+})
+
+test('/cd recusa enquanto a sessão está rodando', async () => {
+  let liberar
+  const espera = new Promise((r) => { liberar = r })
+  const { handler, sessions, ditos, dir } = montar({
+    run: async () => { await espera; return { ok: true, text: 'ok', sessionId: 'sid-1', error: null } },
+    config: { slowNoticeMs: 10_000 },
+  })
+  mkdirSync(join(dir, 'outra'))
+  await handler.handle(`/new ${dir} api`)
+  const turno = handler.handle('trabalha')
+  await new Promise((r) => setImmediate(r))
+
+  await handler.handle('/cd outra')
+  assert.equal(sessions.get('api').cwd, dir)
+  assert.match(ditos.at(-1), /rodando/)
+  liberar()
+  await turno
+})
+
+test('/cd recusa com pedido interrompido pendente', async () => {
+  const { handler, sessions, ditos, dir } = montar()
+  mkdirSync(join(dir, 'outra'))
+  await handler.handle(`/new ${dir} api`)
+  sessions.beginRun('api', 'pedido que morreu')
+  await handler.handle('/cd outra')
+  assert.equal(sessions.get('api').cwd, dir)
+  assert.match(ditos.at(-1), /\/retomar/)
+})
+
+test('/cd sem argumento mostra o uso', async () => {
+  const { handler, ditos, dir } = montar()
+  await handler.handle(`/new ${dir} api`)
+  await handler.handle('/cd')
+  assert.match(ditos.at(-1), /Uso: \/cd/)
 })
 
 test('/end encerra a sessão', async () => {

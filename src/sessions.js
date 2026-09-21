@@ -95,6 +95,21 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
       return true
     },
 
+    // Claude Code files a conversation under the folder it runs in, and
+    // `--resume` plus the transcript reader both look it up there — so moving
+    // a session to another folder has to start a new conversation. `dir` is
+    // resolved from the session's current folder, the way `cd` would.
+    changeDir(name, dir) {
+      const s = api.get(name)
+      if (!s) throw new Error(`não achei a sessão ${name}`)
+      const destino = expandir(dir, s.cwd)
+      if (destino === s.cwd) return { cwd: destino, changed: false }
+      s.cwd = destino
+      s.claudeSessionId = null
+      persist()
+      return { cwd: destino, changed: true }
+    },
+
     // Discarding a busy session's queue in silence is exactly the invariant
     // this file otherwise protects (see PERSISTIDO above): the caller gets
     // the count back so it can say so instead of the prompts just vanishing.

@@ -24,6 +24,7 @@ const AJUDA = [
   '/manuais — lista sessões do claude neste host que o bot não controla',
   '/importar <n> [nome] — adota a sessão n da lista de /manuais',
   '/use <nome> — troca a sessão ativa',
+  '/cd <dir> — muda a pasta da sessão ativa (a conversa recomeça)',
   '/end [nome] — encerra (sem nome, encerra a ativa)',
   '/stop — interrompe o que a sessão ativa está fazendo',
   '/retomar [nome] — refaz o pedido que morreu num reinício',
@@ -307,6 +308,26 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
       if (!nome) return reply('Uso: /use <nome>')
       if (!sessions.setActive(nome)) return reply(`Não achei a sessão ${nome}.`)
       return reply(`Sessão ativa agora é [${nome}].`)
+    },
+
+    async cd(args, rest) {
+      const dir = rest.trim()
+      if (!dir) return reply('Uso: /cd <diretório> — muda a pasta da sessão ativa')
+      const s = sessions.active()
+      if (!s) return reply('Não há sessão ativa. Manda /new pra criar uma.')
+      // Moving mid-turn would read the reply from the wrong folder, and a
+      // pending interrupted request belongs to the conversation /cd discards.
+      if (s.busy) return reply(`[${s.name}] está rodando agora — espera terminar ou manda /stop antes de trocar de pasta.`)
+      if (s.pending) return reply(`[${s.name}] tem um pedido interrompido esperando você: manda /retomar ou /descartar antes de trocar de pasta.`)
+
+      let r
+      try {
+        r = sessions.changeDir(s.name, dir)
+      } catch (err) {
+        return reply(`Não deu: ${err.message}`)
+      }
+      if (!r.changed) return reply(`[${s.name}] já está em ${r.cwd}.`)
+      return reply(`[${s.name}] agora em ${r.cwd}. A conversa recomeça do zero aqui — o Claude guarda o histórico por pasta.`)
     },
 
     async end(args) {
