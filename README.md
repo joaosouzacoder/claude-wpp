@@ -438,6 +438,15 @@ jq -n --arg to 5511911111111 --arg fileName report.pdf --arg caption 'here it is
 `--rawfile` instead of `--arg` keeps a large file off the command line, where
 it would hit the shell's argument-size limit.
 
+In both `/send` and `/send-file`, `to` can be a **contact or group name**
+instead of a number — useful from another machine, which has no way to look
+the number up. It is resolved against the personal account's chats (so that
+account has to be paired), ignoring case and accents: `"fulano bailão"` finds
+`Fulano Bailāo`. An exact name wins; otherwise every word has to appear in the
+name. Exactly one match is sent, and the response names it
+(`{"ok":true,"to":"Fulano Bailāo"}`); several matches are a `409` listing up to
+five `candidates` and nothing is sent; none is a `404`.
+
 `POST /outbox` proposes a draft directly. It never sends either: the draft waits
 for `/ok` on WhatsApp. It is how `agent/propose.mjs` works, and the only write
 path Claude is given.
