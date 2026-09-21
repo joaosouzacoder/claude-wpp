@@ -7,6 +7,15 @@ import { EventEmitter } from 'node:events'
 import { DisconnectReason } from '@whiskeysockets/baileys'
 import { classificar, aceitaDoBot, credenciaisValidas, createWhatsapp, atrasoReconexao } from '../src/whatsapp.js'
 
+test('classificar reconhece documento, com e sem legenda, e o tamanho em Long', () => {
+  const semLegenda = classificar({ message: { documentMessage: { mimetype: 'application/pdf', fileName: 'a.pdf', fileLength: 1234 } } })
+  assert.deepEqual(semLegenda, { kind: 'document', text: '', mimetype: 'application/pdf', fileName: 'a.pdf', size: 1234 })
+
+  const long = { low: 5000, high: 0, toString: () => '5000' }
+  const comLegenda = classificar({ message: { documentWithCaptionMessage: { message: { documentMessage: { mimetype: 'text/csv', fileName: 'b.csv', caption: 'analisa', fileLength: long } } } } })
+  assert.deepEqual(comLegenda, { kind: 'document', text: 'analisa', mimetype: 'text/csv', fileName: 'b.csv', size: 5000 })
+})
+
 test('mensagem de texto simples continua sendo texto', () => {
   assert.deepEqual(classificar({ message: { conversation: 'oi claude' } }), {
     kind: 'text',

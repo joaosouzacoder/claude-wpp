@@ -1004,6 +1004,93 @@ test('resposta curta continua indo como texto, sem anexo', async () => {
   assert.ok(ditos.some((t) => t.includes('resposta')))
 })
 
+test('arquivo marcado pelo Claude vai como anexo, e a marca some do texto', async () => {
+  const anexos = []
+  const pasta = mkdtempSync(join(tmpdir(), 'saida-'))
+  const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff])
+  writeFileSync(join(pasta, 'grafico.png'), bytes)
+  const { handler, ditos } = montar({
+    run: async () => ({ ok: true, text: `Fiz o gráfico.\n\n[[arquivo: ${join(pasta, 'grafico.png')}]]\n\nQualquer coisa, avisa.`, sessionId: 'sid-1', error: null }),
+    replyFile: async (doc) => { anexos.push(doc) },
+    config: { slowNoticeMs: 10_000, maxMessageChars: 3500 },
+  })
+  await handler.handle('faz um gráfico')
+
+  assert.equal(anexos.length, 1)
+  assert.ok(anexos[0].content.equals(bytes), 'bytes do arquivo intactos')
+  assert.equal(anexos[0].fileName, 'grafico.png')
+  assert.equal(anexos[0].mimetype, 'image/png')
+  const texto = ditos.join('\n')
+  assert.match(texto, /Fiz o gráfico\.\n\nQualquer coisa, avisa\./)
+  assert.doesNotMatch(texto, /\[\[arquivo/)
+})
+
+test('caminho relativo na marca resolve a partir da pasta da sessão', async () => {
+  const anexos = []
+  const { handler, dir } = montar({
+    run: async () => ({ ok: true, text: '[[arquivo: relatorio.csv]]', sessionId: 'sid-1', error: null }),
+    replyFile: async (doc) => { anexos.push(doc) },
+    config: { slowNoticeMs: 10_000 },
+  })
+  writeFileSync(join(dir, 'relatorio.csv'), 'a,b\n1,2\n')
+  await handler.handle(`/new ${dir} api`)
+  await handler.handle('gera o csv')
+  assert.equal(anexos.length, 1)
+  assert.equal(anexos[0].content.toString(), 'a,b\n1,2\n')
+  assert.equal(anexos[0].mimetype, 'text/csv')
+})
+
+test('só a marca, sem texto: manda o anexo e nenhum balão vazio', async () => {
+  const pasta = mkdtempSync(join(tmpdir(), 'saida-'))
+  writeFileSync(join(pasta, 'a.txt'), 'x')
+  const { handler, ditos } = montar({
+    run: async () => ({ ok: true, text: `[[arquivo: ${join(pasta, 'a.txt')}]]`, sessionId: 'sid-1', error: null }),
+    replyFile: async () => {},
+    config: { slowNoticeMs: 10_000 },
+  })
+  await handler.handle('manda')
+  assert.ok(!ditos.some((t) => /^\[s1\]\s*$/.test(t)), 'sem balão vazio')
+})
+
+test('marca apontando para arquivo que não existe avisa em vez de sumir', async () => {
+  const anexos = []
+  const { handler, ditos } = montar({
+    run: async () => ({ ok: true, text: 'Segue.\n[[arquivo: /nao/existe.pdf]]', sessionId: 'sid-1', error: null }),
+    replyFile: async (doc) => { anexos.push(doc) },
+    config: { slowNoticeMs: 10_000 },
+  })
+  await handler.handle('manda o pdf')
+  assert.equal(anexos.length, 0)
+  assert.ok(ditos.some((t) => t.includes('não achei o arquivo /nao/existe.pdf')))
+})
+
+test('documento do celular vira prompt com o caminho e o nome original', async () => {
+  const prompts = []
+  const { handler } = montar({
+    run: async ({ prompt }) => { prompts.push(prompt); return { ok: true, text: 'ok', sessionId: 'sid-1', error: null } },
+  })
+  await handler.handle({ text: 'resume esse contrato', media: { kind: 'document', path: '/tmp/x/123-contrato.pdf', fileName: 'contrato.pdf' } })
+  assert.match(prompts[0], /^resume esse contrato/)
+  assert.match(prompts[0], /arquivo anexado \(contrato\.pdf\) em \/tmp\/x\/123-contrato\.pdf/)
+})
+
+test('documento sem legenda ganha o pedido padrão', async () => {
+  const prompts = []
+  const { handler } = montar({
+    run: async ({ prompt }) => { prompts.push(prompt); return { ok: true, text: 'ok', sessionId: 'sid-1', error: null } },
+  })
+  await handler.handle({ text: '', media: { kind: 'document', path: '/tmp/x/1-a.xlsx', fileName: 'a.xlsx' } })
+  assert.match(prompts[0], /^Analise o arquivo anexado\./)
+})
+
+test('documento grande demais é recusado sem rodar o Claude', async () => {
+  let rodou = false
+  const { handler, ditos } = montar({ run: async () => { rodou = true; return { ok: true, text: '', sessionId: null, error: null } } })
+  await handler.handle({ text: 'olha', media: { kind: 'document', fileName: 'backup.zip', size: 80 * 1024 * 1024, tooLarge: true } })
+  assert.equal(rodou, false)
+  assert.match(ditos.at(-1), /backup\.zip tem 80 MB/)
+})
+
 test('anexo que falha ao sair cai para os balões de texto: a resposta nunca se perde', async () => {
   const longa = Array.from({ length: 40 }, (_, i) => `linha ${i}`).join('\n')
   const { handler, ditos } = montar({

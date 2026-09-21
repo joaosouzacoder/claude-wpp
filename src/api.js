@@ -1,36 +1,14 @@
 import { createServer } from 'node:http'
 import { timingSafeEqual } from 'node:crypto'
+import { mimetypeDe } from './mimetypes.js'
+
+export { mimetypeDe }
 
 const LIMITE_BODY = 64 * 1024
 // A file travels base64-encoded inside the JSON, a third bigger than itself:
 // this admits files up to roughly 16 MB.
 const LIMITE_BODY_ARQUIVO = 24 * 1024 * 1024
 const NOME_ARQUIVO_MAX = 200
-
-// What the phone uses to pick a viewer. Anything not listed still goes out,
-// as a generic download.
-const MIMETYPES = {
-  pdf: 'application/pdf',
-  txt: 'text/plain',
-  md: 'text/markdown',
-  csv: 'text/csv',
-  json: 'application/json',
-  html: 'text/html',
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  zip: 'application/zip',
-  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-}
-
-export function mimetypeDe(nome) {
-  const ext = nome.includes('.') ? nome.split('.').pop().toLowerCase() : ''
-  return MIMETYPES[ext] ?? 'application/octet-stream'
-}
 
 // The name is only what the phone displays, but it arrives from the caller:
 // a bare file name, never a path.
