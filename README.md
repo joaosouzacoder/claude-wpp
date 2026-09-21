@@ -33,6 +33,7 @@ systemctl --user start claude-wpp
 | `/manuais` | lists claude sessions on this host the bot does not control |
 | `/importar <n> [name]` | adopts session `n` from `/manuais` so `@name` can reach it |
 | `/use <name>` | switches the active session |
+| `/cd <dir>` | moves the active session to another folder (relative to its current one); the conversation starts over, since Claude Code files history per folder |
 | `/end [name]` | ends the session (says how many queued messages it dropped, if any) |
 | `/stop` | interrupts whatever the active session is doing |
 | `/retomar [name]` | redoes the request a restart killed mid-run |
