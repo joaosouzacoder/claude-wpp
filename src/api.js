@@ -2,6 +2,55 @@ import { createServer } from 'node:http'
 import { timingSafeEqual } from 'node:crypto'
 
 const LIMITE_BODY = 64 * 1024
+// A file travels base64-encoded inside the JSON, a third bigger than itself:
+// this admits files up to roughly 16 MB.
+const LIMITE_BODY_ARQUIVO = 24 * 1024 * 1024
+const NOME_ARQUIVO_MAX = 200
+
+// What the phone uses to pick a viewer. Anything not listed still goes out,
+// as a generic download.
+const MIMETYPES = {
+  pdf: 'application/pdf',
+  txt: 'text/plain',
+  md: 'text/markdown',
+  csv: 'text/csv',
+  json: 'application/json',
+  html: 'text/html',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  zip: 'application/zip',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+}
+
+export function mimetypeDe(nome) {
+  const ext = nome.includes('.') ? nome.split('.').pop().toLowerCase() : ''
+  return MIMETYPES[ext] ?? 'application/octet-stream'
+}
+
+// The name is only what the phone displays, but it arrives from the caller:
+// a bare file name, never a path.
+export function nomeDeArquivoValido(nome) {
+  return typeof nome === 'string'
+    && nome.length > 0
+    && nome.length <= NOME_ARQUIVO_MAX
+    && !/[/\\\0]/.test(nome)
+    && nome !== '.'
+    && nome !== '..'
+}
+
+// Buffer.from(x, 'base64') silently skips characters it does not recognize,
+// so garbage would decode into a corrupted file instead of an error.
+export function decodificarBase64(texto) {
+  if (typeof texto !== 'string') return null
+  const limpo = texto.replace(/\s+/g, '')
+  if (!limpo || limpo.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(limpo)) return null
+  return Buffer.from(limpo, 'base64')
+}
 
 function tokenConfere(recebido, esperado) {
   const a = Buffer.from(String(recebido ?? ''))
@@ -10,14 +59,22 @@ function tokenConfere(recebido, esperado) {
   return timingSafeEqual(a, b)
 }
 
-function lerBody(req) {
+class BodyGrandeDemais extends Error {}
+
+function lerBody(req, limite = LIMITE_BODY) {
   return new Promise((resolve, reject) => {
     let dados = ''
+    let estourou = false
     req.on('data', (pedaco) => {
+      if (estourou) return
       dados += pedaco
-      if (dados.length > LIMITE_BODY) {
-        reject(new Error('body grande demais'))
-        req.destroy()
+      if (dados.length > limite) {
+        // Keep draining instead of destroying the socket: destroying it here
+        // cuts the connection before the caller ever sees the error response.
+        // Only authenticated callers get this far.
+        estourou = true
+        dados = ''
+        reject(new BodyGrandeDemais('body grande demais'))
       }
     })
     req.on('end', () => resolve(dados))
@@ -138,6 +195,38 @@ export function createApi({
         return json(res, 502, { ok: false, error: err.message })
       }
       return json(res, 200, { ok: true, sent: r.sent, deduped: r.deduped })
+    }
+
+    // Like /send — as the bot, immediately — but a file instead of text.
+    if (url.pathname === '/send-file') {
+      if (req.method !== 'POST') return json(res, 405, { ok: false, error: 'método não permitido' })
+      if (!autorizado()) return json(res, 401, { ok: false, error: 'não autorizado' })
+
+      let corpo
+      try {
+        corpo = JSON.parse(await lerBody(req, LIMITE_BODY_ARQUIVO))
+      } catch (err) {
+        if (err instanceof BodyGrandeDemais) return json(res, 413, { ok: false, error: 'arquivo grande demais (máx. ~16 MB)' })
+        return json(res, 400, { ok: false, error: 'json inválido' })
+      }
+
+      const { to, fileName, content, caption, mimetype } = corpo ?? {}
+      if (!to) return json(res, 400, { ok: false, error: 'to é obrigatório' })
+      if (!nomeDeArquivoValido(fileName)) return json(res, 400, { ok: false, error: 'fileName inválido: um nome de arquivo, sem caminho' })
+      const bytes = decodificarBase64(content)
+      if (!bytes) return json(res, 400, { ok: false, error: 'content tem que ser o arquivo em base64' })
+
+      try {
+        await whatsapp.sendDocument(String(to), {
+          content: bytes,
+          fileName,
+          caption: typeof caption === 'string' && caption ? caption : undefined,
+          mimetype: typeof mimetype === 'string' && mimetype ? mimetype : mimetypeDe(fileName),
+        })
+      } catch (err) {
+        return json(res, 502, { ok: false, error: err.message })
+      }
+      return json(res, 200, { ok: true, bytes: bytes.length })
     }
 
     if (url.pathname === '/send') {

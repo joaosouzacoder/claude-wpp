@@ -279,11 +279,12 @@ export function createWhatsapp({
     return r?.key?.id ?? null
   }
 
-  async function sendDocument(destino, { content, fileName, caption }) {
+  // `content` is either text (a long reply) or the raw bytes of any file.
+  async function sendDocument(destino, { content, fileName, caption, mimetype = 'text/plain' }) {
     if (!sock) throw new Error('WhatsApp não está conectado')
     const r = await sock.sendMessage(jidDe(destino), {
-      document: Buffer.from(content, 'utf8'),
-      mimetype: 'text/plain',
+      document: Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf8'),
+      mimetype,
       fileName,
       caption,
     })

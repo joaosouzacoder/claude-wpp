@@ -1,13 +1,15 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { createApi } from '../src/api.js'
+import { createApi, mimetypeDe, decodificarBase64, nomeDeArquivoValido } from '../src/api.js'
 import { openDb } from '../src/db.js'
 import { createOutbox } from '../src/outbox.js'
 import { createNotifier } from '../src/notify.js'
 
 const enviados = []
+const documentos = []
 const whatsapp = {
   sendText: async (to, text) => { enviados.push({ to, text }) },
+  sendDocument: async (to, doc) => { documentos.push({ to, ...doc }) },
   state: () => 'open',
 }
 
@@ -294,4 +296,94 @@ test('notify sem notificador configurado é 503', async () => {
     body: JSON.stringify({ text: 'x' }),
   })
   assert.equal(r.status, 503)
+})
+
+const enviarArquivo = (corpo, { token = 'segredo', url = base } = {}) => fetch(`${url}/send-file`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+  body: typeof corpo === 'string' ? corpo : JSON.stringify(corpo),
+})
+
+// Bytes that are not valid UTF-8: a binary file has to arrive untouched.
+const BINARIO = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x00, 0xff, 0xfe, 0x80, 0x0a])
+
+test('send-file entrega o arquivo byte a byte, com o mimetype pela extensão', async () => {
+  const r = await enviarArquivo({ to: '5511911111111', fileName: 'relatorio.pdf', content: BINARIO.toString('base64'), caption: 'segue' })
+  assert.equal(r.status, 200)
+  assert.deepEqual(await r.json(), { ok: true, bytes: BINARIO.length })
+  const doc = documentos.at(-1)
+  assert.equal(doc.to, '5511911111111')
+  assert.ok(Buffer.isBuffer(doc.content) && doc.content.equals(BINARIO), 'bytes intactos')
+  assert.equal(doc.fileName, 'relatorio.pdf')
+  assert.equal(doc.mimetype, 'application/pdf')
+  assert.equal(doc.caption, 'segue')
+})
+
+test('send-file respeita um mimetype explícito', async () => {
+  await enviarArquivo({ to: '5511911111111', fileName: 'dados', content: BINARIO.toString('base64'), mimetype: 'application/x-custom' })
+  assert.equal(documentos.at(-1).mimetype, 'application/x-custom')
+})
+
+test('send-file exige token, e sem ele nem lê o corpo', async () => {
+  const antes = documentos.length
+  assert.equal((await enviarArquivo({ to: '5511911111111', fileName: 'a.txt', content: 'b2k=' }, { token: null })).status, 401)
+  assert.equal((await enviarArquivo({ to: '5511911111111', fileName: 'a.txt', content: 'b2k=' }, { token: 'errado' })).status, 401)
+  assert.equal(documentos.length, antes)
+})
+
+test('send-file recusa nome com caminho, base64 inválido e destino vazio', async () => {
+  const antes = documentos.length
+  const casos = [
+    { to: '5511911111111', fileName: '../../etc/passwd', content: 'b2k=' },
+    { to: '5511911111111', fileName: 'a\\b.txt', content: 'b2k=' },
+    { to: '5511911111111', fileName: '..', content: 'b2k=' },
+    { to: '5511911111111', fileName: '', content: 'b2k=' },
+    { to: '5511911111111', fileName: 'a.txt', content: 'isto não é base64!' },
+    { to: '5511911111111', fileName: 'a.txt', content: '' },
+    { fileName: 'a.txt', content: 'b2k=' },
+  ]
+  for (const corpo of casos) {
+    const r = await enviarArquivo(corpo)
+    assert.equal(r.status, 400, JSON.stringify(corpo))
+  }
+  assert.equal(documentos.length, antes)
+})
+
+test('send-file acima do limite responde 413 em vez de derrubar a conexão', async () => {
+  const gigante = JSON.stringify({ to: '5511911111111', fileName: 'a.bin', content: 'A'.repeat(25 * 1024 * 1024) })
+  const r = await enviarArquivo(gigante)
+  assert.equal(r.status, 413)
+  assert.match((await r.json()).error, /grande demais/)
+})
+
+test('send-file com o whatsapp fora do ar é 502', async () => {
+  const falho = createApi({
+    host: '127.0.0.1', port: 0, token: 'segredo',
+    whatsapp: { ...whatsapp, sendDocument: async () => { throw new Error('WhatsApp não está conectado') } },
+  })
+  const porta = await falho.listen()
+  const r = await enviarArquivo({ to: '5511911111111', fileName: 'a.txt', content: 'b2k=' }, { url: `http://127.0.0.1:${porta}` })
+  assert.equal(r.status, 502)
+  await falho.close()
+})
+
+test('mimetypeDe cobre os formatos comuns e cai no genérico', () => {
+  assert.equal(mimetypeDe('a.PDF'), 'application/pdf')
+  assert.equal(mimetypeDe('foto.jpg'), 'image/jpeg')
+  assert.equal(mimetypeDe('planilha.xlsx'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  assert.equal(mimetypeDe('sem-extensao'), 'application/octet-stream')
+})
+
+test('decodificarBase64 aceita quebra de linha e recusa lixo', () => {
+  assert.equal(decodificarBase64('b2k=').toString(), 'oi')
+  assert.equal(decodificarBase64('b2\nk=').toString(), 'oi', 'base64 com quebra de linha, como o `base64` sem -w0 gera')
+  assert.equal(decodificarBase64('b2k'), null)
+  assert.equal(decodificarBase64('!!!!'), null)
+  assert.equal(decodificarBase64(42), null)
+})
+
+test('nomeDeArquivoValido só aceita nome, nunca caminho', () => {
+  assert.equal(nomeDeArquivoValido('relatório final.pdf'), true)
+  assert.equal(nomeDeArquivoValido('a/b.pdf'), false)
+  assert.equal(nomeDeArquivoValido('x'.repeat(201)), false)
 })
