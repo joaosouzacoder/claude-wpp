@@ -17,6 +17,10 @@ const DEFAULTS = {
   // never the right default (see the comment above BLOQUEIO_TIMEOUT_MS).
   blockedTimeoutMs: 20 * 60 * 1000,
   maxMessageChars: 3500,
+  // Past this, a reply arrives as a preview plus a .txt attachment instead of
+  // a run of message bubbles: two full bubbles is where reading on a phone
+  // stops working.
+  attachAboveChars: 7000,
   openaiApiKey: null,
   transcribeModel: 'gpt-4o-transcribe',
   transcribeTimeoutMs: 120000,

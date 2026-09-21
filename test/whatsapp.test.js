@@ -308,3 +308,25 @@ test('sendText sem conexão explica em vez de estourar dentro do baileys', async
   const { wa } = montarWhatsapp()
   await assert.rejects(wa.sendText('5511911111111', 'oi'), /não está conectado/)
 })
+
+test('sendDocument manda o texto como arquivo .txt com legenda', async () => {
+  const { wa, sockets } = montarWhatsapp()
+  const conectando = wa.connect()
+  const sock = await aguardarSocket(sockets)
+  sock.ev.emit('connection.update', { connection: 'open' })
+  await conectando
+
+  const id = await wa.sendDocument('5511911111111', { content: 'relatório inteiro', fileName: 'api.txt', caption: '[api] prévia' })
+  assert.equal(id, 'WA-FAKE')
+  const [jid, conteudo] = sock.sendMessage.mock.calls[0].arguments
+  assert.equal(jid, '5511911111111@s.whatsapp.net')
+  assert.equal(conteudo.document.toString('utf8'), 'relatório inteiro')
+  assert.equal(conteudo.mimetype, 'text/plain')
+  assert.equal(conteudo.fileName, 'api.txt')
+  assert.equal(conteudo.caption, '[api] prévia')
+})
+
+test('sendDocument sem conexão explica em vez de estourar dentro do baileys', async () => {
+  const { wa } = montarWhatsapp()
+  await assert.rejects(wa.sendDocument('5511911111111', { content: 'x', fileName: 'a.txt' }), /não está conectado/)
+})

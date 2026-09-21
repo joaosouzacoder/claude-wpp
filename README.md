@@ -84,6 +84,7 @@ video is read, as before.
 | `mediaMaxAgeMs` | `2592000000` (30 days) | media older than this is deleted on boot |
 | `heartbeatMs` | `300000` | how often a running job repeats that it is alive |
 | `blockedTimeoutMs` | `1200000` (20 min) | how long a `blocked` session is given before claude-wpp cancels it on its own |
+| `attachAboveChars` | `7000` | a reply longer than this arrives as a `.txt` attachment |
 
 When something takes longer than 8 seconds, the bot replies `Trabalhando nisso.`
 and then repeats `Ainda trabalhando nisso (12min).` every `heartbeatMs` until
@@ -94,6 +95,12 @@ an hour. The cost is that a stuck run holds its session until you send
 `/stop`, so nothing queued behind it moves. Set `timeoutMs` in milliseconds if
 you would rather have a cap. Every reply is prefixed with
 `[session-name]`, because with parallel sessions they arrive out of order.
+
+A reply longer than `attachAboveChars` — a diff, a log, a long report — does
+not arrive as a run of message bubbles: it comes as a `<session>.txt`
+attachment, with its opening lines in the caption so the gist is still
+readable in the chat. If the attachment fails to send, the reply falls back
+to plain message bubbles rather than being lost.
 
 ### A restart no longer eats your request
 

@@ -6,6 +6,10 @@ import { formatDraft, formatQueue } from './wpp.js'
 
 const SESSAO_WPP = 'wpp'
 
+// Enough of a long reply's opening to tell what it says without opening the
+// attachment, and well under what WhatsApp shows of a caption.
+const PREVIA_ANEXO = 700
+
 // Every reply dispatched from here is read on a phone screen inside
 // WhatsApp, not a terminal. Recorded once per conversation (Claude Code's
 // system-prompt snapshot), so it only takes effect from a session's first
@@ -68,12 +72,27 @@ function ociosidade(iso) {
   return `${Math.floor(min / 60)}h`
 }
 
-export function createHandler({ sessions, run, attach = null, transcribe, reply, config, wpp = null, listAgents = null }) {
+export function createHandler({ sessions, run, attach = null, transcribe, reply, replyFile = null, config, wpp = null, listAgents = null }) {
   // What /manuais last showed, so /importar <n> knows which session that
   // number meant. Only ever read right after a fresh /manuais.
   let sessoesManuais = []
 
   async function responder(nome, texto) {
+    // A long reply as a run of bubbles cannot be read or searched on a phone.
+    // As a file it can — with the opening in the caption, so the gist still
+    // shows up in the chat. If the attachment cannot go out, the bubbles still
+    // do: a reply must never be lost to its own formatting.
+    if (replyFile && texto.length > config.attachAboveChars) {
+      const [previa] = chunkText(texto, PREVIA_ANEXO)
+      try {
+        await replyFile({
+          content: texto,
+          fileName: `${nome}.txt`,
+          caption: `[${nome}] ${previa}\n\n… resposta completa (${texto.length} caracteres) no anexo.`,
+        })
+        return
+      } catch {}
+    }
     for (const pedaco of chunkText(texto, config.maxMessageChars)) {
       await reply(`[${nome}] ${pedaco}`)
     }
