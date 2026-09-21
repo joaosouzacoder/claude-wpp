@@ -16,6 +16,12 @@ EnvironmentFile=-%h/.tokens
 ExecStart=%h/.asdf/installs/nodejs/24.15.0/bin/node %h/claude-wpp/src/index.js
 Restart=always
 RestartSec=5
+# Stop only the Node process. Whenever claude's background daemon happens to
+# be started by one of this service's own `claude --bg` calls, it lives in this
+# unit's cgroup — and the default (control-group) would kill it on every
+# restart, taking down every background agent on the host mid-turn, not just
+# the bot's. Left running, a turn in flight is picked back up on the next boot.
+KillMode=process
 StandardOutput=journal
 StandardError=journal
 

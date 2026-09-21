@@ -10,13 +10,14 @@ import { transcribe as transcribeReal } from '../src/transcribe.js'
 import { openDb } from '../src/db.js'
 import { createOutbox } from '../src/outbox.js'
 
-function montar({ run, transcribe, config, listAgents } = {}) {
+function montar({ run, attach, transcribe, config, listAgents } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'handler-'))
   const sessions = createSessions({ store: createStore(join(dir, 'state.json')), defaultCwd: dir })
   const ditos = []
   const handler = createHandler({
     sessions,
     run: run ?? (async () => ({ ok: true, text: 'resposta', sessionId: 'sid-1', error: null })),
+    attach,
     transcribe: transcribe ?? (async () => ({ ok: true, text: 'transcrição do áudio', error: null })),
     reply: async (t) => { ditos.push(t) },
     listAgents,
@@ -813,6 +814,92 @@ test('reply() falhando ao entregar a resposta final não trava a fila atrás del
   await Promise.all([primeira, segunda])
 
   assert.deepEqual(processados, ['primeira', 'segunda'], 'segunda roda mesmo com a entrega da resposta de primeira falhando')
+})
+
+test('o agente que segura o turno vai para o disco assim que é conhecido, antes do turno acabar', async () => {
+  let liberar
+  const espera = new Promise((r) => { liberar = r })
+  let disparou
+  const disparado = new Promise((r) => { disparou = r })
+  const { handler, dir } = montar({
+    run: async ({ onDispatch }) => {
+      onDispatch({ bgId: 'abc12345', sessionId: 'sid-novo' })
+      disparou()
+      await espera
+      return { ok: true, text: 'fim', sessionId: 'sid-novo', error: null }
+    },
+  })
+
+  const turno = handler.handle('um pedido')
+  await disparado
+  // What a restart would find: a fresh process reading the same state file.
+  const depois = createSessions({ store: createStore(join(dir, 'state.json')), defaultCwd: dir })
+  const s = depois.list()[0]
+  assert.equal(s.pending.bgId, 'abc12345')
+  assert.equal(s.pending.sessionId, 'sid-novo')
+  assert.equal(s.claudeSessionId, 'sid-novo', 'uma sessão nova já sabe seu id antes de o turno terminar')
+
+  liberar()
+  await turno
+})
+
+test('recuperar() reanexa ao agente que ainda está rodando em vez de oferecer /retomar', async () => {
+  const anexados = []
+  const { handler, sessions, ditos, dir } = montar({
+    listAgents: async () => [{ id: 'abc12345', sessionId: 'sid-1', status: 'busy' }],
+    attach: async (opcoes) => {
+      anexados.push(opcoes)
+      return { ok: true, text: 'terminou depois do restart', sessionId: 'sid-1', error: null }
+    },
+    run: async () => { throw new Error('não pode re-executar o pedido') },
+  })
+  sessions.create({ cwd: dir, name: 'api' })
+  sessions.beginRun('api', 'aquele pedido longo')
+  sessions.markDispatched('api', { bgId: 'abc12345', sessionId: 'sid-1' })
+  const { startedAt } = sessions.get('api').pending
+
+  await handler.recuperar()
+  while (sessions.get('api').busy) await new Promise((r) => setImmediate(r))
+
+  assert.equal(anexados.length, 1)
+  assert.equal(anexados[0].bgId, 'abc12345')
+  assert.equal(anexados[0].sessionId, 'sid-1')
+  assert.equal(anexados[0].sentAt, startedAt)
+  const tudo = ditos.join('\n')
+  assert.match(tudo, /continua rodando/)
+  assert.match(tudo, /terminou depois do restart/)
+  assert.doesNotMatch(tudo, /\/retomar/)
+  assert.equal(sessions.get('api').pending, null)
+})
+
+test('recuperar() com o agente já fora da lista cai no aviso de /retomar de sempre', async () => {
+  let anexou = false
+  const { handler, sessions, ditos, dir } = montar({
+    listAgents: async () => [],
+    attach: async () => { anexou = true; return { ok: true, text: '', sessionId: null, error: null } },
+  })
+  sessions.create({ cwd: dir, name: 'api' })
+  sessions.beginRun('api', 'aquele pedido longo')
+  sessions.markDispatched('api', { bgId: 'abc12345', sessionId: 'sid-1' })
+
+  await handler.recuperar()
+  assert.equal(anexou, false)
+  assert.match(ditos.join('\n'), /\/retomar api/)
+})
+
+test('recuperar() não confia numa listagem que falhou: pergunta em vez de reanexar', async () => {
+  let anexou = false
+  const { handler, sessions, ditos, dir } = montar({
+    listAgents: async () => { throw new Error('claude agents fora do ar') },
+    attach: async () => { anexou = true; return { ok: true, text: '', sessionId: null, error: null } },
+  })
+  sessions.create({ cwd: dir, name: 'api' })
+  sessions.beginRun('api', 'aquele pedido longo')
+  sessions.markDispatched('api', { bgId: 'abc12345', sessionId: 'sid-1' })
+
+  await handler.recuperar()
+  assert.equal(anexou, false)
+  assert.match(ditos.join('\n'), /\/retomar api/)
 })
 
 test('recuperar() fica calado quando nada morreu no meio', async () => {

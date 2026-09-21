@@ -598,3 +598,66 @@ test('com heartbeatMs, onSlow repete enquanto a sessão segue busy', async () =>
   assert.equal(r.ok, true)
   assert.ok(marcas.length >= 2, `esperava vários avisos, vieram ${marcas.length}`)
 })
+
+test('onDispatch recebe o id do agente assim que dispara, e de novo quando o sessionId aparece', async () => {
+  const avisos = []
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-novo', status: 'idle' }]) },
+    },
+    readReply: () => ({ content: 'pronto', timestamp: new Date(2_000_000).toISOString() }),
+  })
+  await claude.run({ ...base, onDispatch: (d) => avisos.push(d) })
+  assert.deepEqual(avisos, [
+    { bgId: 'abc12345', sessionId: null },
+    { bgId: 'abc12345', sessionId: 'sid-novo' },
+  ])
+})
+
+test('attach não dispara nada: acompanha o agente que já estava rodando e entrega a resposta', async () => {
+  let checagens = 0
+  const { claude, chamadas } = montar({
+    respostas: {
+      agents: () => {
+        checagens += 1
+        const status = checagens < 3 ? 'busy' : 'idle'
+        return { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', status }]) }
+      },
+    },
+    readReply: () => ({ content: 'terminei depois do restart', timestamp: new Date(2_000_000).toISOString() }),
+  })
+
+  const r = await claude.attach({ cwd: '/tmp/algum', bgId: 'abc12345', sessionId: 'sid-1', sentAt: new Date(1_000_000).toISOString(), slowNoticeMs: 50 })
+  assert.deepEqual(r, { ok: true, text: 'terminei depois do restart', sessionId: 'sid-1', error: null })
+  assert.equal(chamadas.filter((c) => c.args[0] === '--bg').length, 0)
+  assert.ok(checagens >= 3)
+})
+
+test('attach não aceita como nova uma resposta anterior ao pedido interrompido', async () => {
+  const { claude } = montar({
+    respostas: {
+      agents: { code: 0, stdout: JSON.stringify([]) },
+    },
+    readReply: () => ({ content: 'resposta do turno anterior', timestamp: new Date(500_000).toISOString() }),
+  })
+  const r = await claude.attach({ cwd: '/tmp/algum', bgId: 'abc12345', sessionId: 'sid-1', sentAt: new Date(1_000_000).toISOString(), slowNoticeMs: 50 })
+  assert.equal(r.ok, false)
+})
+
+test('attach também para o agente certo no /stop', async () => {
+  const paradas = []
+  const controle = new AbortController()
+  const { claude } = montar({
+    respostas: {
+      agents: () => {
+        controle.abort()
+        return { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', status: 'busy' }]) }
+      },
+      stop: (args) => { paradas.push(args[1]); return { code: 0 } },
+    },
+  })
+  const r = await claude.attach({ cwd: '/tmp/algum', bgId: 'abc12345', sessionId: 'sid-1', sentAt: new Date(1_000_000).toISOString(), slowNoticeMs: 50, signal: controle.signal })
+  assert.equal(r.error, 'Interrompido.')
+  assert.ok(paradas.includes('abc12345'))
+})

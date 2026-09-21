@@ -117,6 +117,19 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
       persist()
     },
 
+    // Which background agent holds the turn in flight, on disk the moment it is
+    // known: after a restart, this is what lets recovery wait on that agent
+    // instead of re-running the prompt. The conversation id is kept too — a
+    // brand-new session would otherwise only learn its id when the turn ends,
+    // which a restart may never let happen.
+    markDispatched(name, { bgId, sessionId }) {
+      const s = api.get(name)
+      if (!s?.pending) return
+      s.pending = { ...s.pending, bgId, sessionId: sessionId ?? null }
+      if (sessionId) s.claudeSessionId = sessionId
+      persist()
+    },
+
     endRun(name) {
       const s = api.get(name)
       if (!s) return
