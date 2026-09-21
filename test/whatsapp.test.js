@@ -326,6 +326,20 @@ test('sendDocument manda o texto como arquivo .txt com legenda', async () => {
   assert.equal(conteudo.caption, '[api] prévia')
 })
 
+test('sendDocument com bytes e mimetype manda o arquivo como veio', async () => {
+  const { wa, sockets } = montarWhatsapp()
+  const conectando = wa.connect()
+  const sock = await aguardarSocket(sockets)
+  sock.ev.emit('connection.update', { connection: 'open' })
+  await conectando
+
+  const bytes = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x00, 0xff])
+  await wa.sendDocument('5511911111111', { content: bytes, fileName: 'a.pdf', mimetype: 'application/pdf' })
+  const [, conteudo] = sock.sendMessage.mock.calls[0].arguments
+  assert.ok(conteudo.document.equals(bytes))
+  assert.equal(conteudo.mimetype, 'application/pdf')
+})
+
 test('sendDocument sem conexão explica em vez de estourar dentro do baileys', async () => {
   const { wa } = montarWhatsapp()
   await assert.rejects(wa.sendDocument('5511911111111', { content: 'x', fileName: 'a.txt' }), /não está conectado/)

@@ -403,6 +403,25 @@ drift from what typing `/wpp` does. It answers `202` the moment the request is
 queued — the run takes as long as it takes and reports on WhatsApp, which is
 where the draft waits for your `/ok` regardless.
 
+`POST /send-file` is `/send` for a file — also as the bot, immediately. The
+file travels base64-encoded in the body, so it works from any machine that
+holds the token, not only this one. Up to roughly 16 MB; the mimetype is taken
+from the extension unless you pass one, and `fileName` must be a bare name,
+not a path:
+
+```bash
+jq -n --arg to 5511911111111 --arg fileName report.pdf --arg caption 'here it is' \
+      --rawfile content <(base64 -w0 report.pdf) \
+      '{to:$to, fileName:$fileName, caption:$caption, content:$content}' \
+  | curl -X POST $HOST/send-file \
+      -H "authorization: Bearer $TOKEN" \
+      -H 'content-type: application/json' \
+      --data-binary @-
+```
+
+`--rawfile` instead of `--arg` keeps a large file off the command line, where
+it would hit the shell's argument-size limit.
+
 `POST /outbox` proposes a draft directly. It never sends either: the draft waits
 for `/ok` on WhatsApp. It is how `agent/propose.mjs` works, and the only write
 path Claude is given.
