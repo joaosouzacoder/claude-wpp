@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { createApi } from '../src/api.js'
 import { openDb } from '../src/db.js'
 import { createOutbox } from '../src/outbox.js'
+import { createNotifier } from '../src/notify.js'
 
 const enviados = []
 const whatsapp = {
@@ -225,4 +226,72 @@ test('sem conta pessoal ligada, /wpp responde 503 em vez de fingir', async () =>
   })
   assert.equal(r.status, 503)
   await semWpp.close()
+})
+
+async function subirComNotificador({ send }) {
+  const alertas = []
+  const notifier = createNotifier({
+    send: send ?? (async (texto) => { alertas.push(texto) }),
+    dedupMs: 60_000,
+  })
+  const servidor = createApi({ host: '127.0.0.1', port: 0, token: 'segredo', whatsapp, notifier })
+  const porta = await servidor.listen()
+  const notificar = (corpo, token = 'segredo') => fetch(`http://127.0.0.1:${porta}/notify`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(corpo),
+  })
+  return { servidor, notificar, alertas }
+}
+
+test('notify entrega ao dono com a origem marcada', async () => {
+  const { servidor, notificar, alertas } = await subirComNotificador({})
+  const r = await notificar({ text: 'disco em 91%', source: 'srv1' })
+  assert.equal(r.status, 200)
+  assert.deepEqual(await r.json(), { ok: true, sent: true, deduped: false })
+  assert.deepEqual(alertas, ['🔔 [srv1] disco em 91%'])
+  await servidor.close()
+})
+
+test('notify com a mesma key dentro da janela não repete', async () => {
+  const { servidor, notificar, alertas } = await subirComNotificador({})
+  await notificar({ text: 'CI quebrou', key: 'ci-main' })
+  const r = await notificar({ text: 'CI quebrou', key: 'ci-main' })
+  assert.deepEqual(await r.json(), { ok: true, sent: false, deduped: true })
+  assert.equal(alertas.length, 1)
+  await servidor.close()
+})
+
+test('notify exige token', async () => {
+  const { servidor, notificar, alertas } = await subirComNotificador({})
+  assert.equal((await notificar({ text: 'x' }, null)).status, 401)
+  assert.equal((await notificar({ text: 'x' }, 'errado')).status, 401)
+  assert.equal(alertas.length, 0)
+  await servidor.close()
+})
+
+test('notify sem text, ou com text que não é string, é 400', async () => {
+  const { servidor, notificar, alertas } = await subirComNotificador({})
+  assert.equal((await notificar({ source: 'srv1' })).status, 400)
+  assert.equal((await notificar({ text: '   ' })).status, 400)
+  assert.equal((await notificar({ text: 42 })).status, 400)
+  assert.equal(alertas.length, 0)
+  await servidor.close()
+})
+
+test('notify com o whatsapp fora do ar é 502, não 200', async () => {
+  const { servidor, notificar } = await subirComNotificador({ send: async () => { throw new Error('WhatsApp não está conectado') } })
+  const r = await notificar({ text: 'x' })
+  assert.equal(r.status, 502)
+  assert.match((await r.json()).error, /não está conectado/)
+  await servidor.close()
+})
+
+test('notify sem notificador configurado é 503', async () => {
+  const r = await fetch(`${base}/notify`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer segredo' },
+    body: JSON.stringify({ text: 'x' }),
+  })
+  assert.equal(r.status, 503)
 })

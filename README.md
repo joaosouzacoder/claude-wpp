@@ -407,6 +407,35 @@ where the draft waits for your `/ok` regardless.
 for `/ok` on WhatsApp. It is how `agent/propose.mjs` works, and the only write
 path Claude is given.
 
+### Alerts: `POST /notify`
+
+A channel for other machines and scripts — CI, a deploy, a cron check — to
+reach you. It always goes to `authorizedNumber`, so the caller does not need
+to know it:
+
+```bash
+curl -X POST $HOST/notify \
+  -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"text":"disk at 91% on /","source":"srv1","key":"disk-srv1"}'
+```
+
+Arrives as `🔔 [srv1] disk at 91% on /`. `source` is optional. `key` is
+optional too, and it is what keeps a check that fails every minute from
+pinging you sixty times: repeats of the same `key` inside `notifyDedupMs` are
+dropped and answered with `"deduped": true`. Only a delivered alert starts
+that window — if WhatsApp is down the call returns `502`, and the retry goes
+through.
+
+A disk check from cron, for example:
+
+```bash
+uso=$(df --output=pcent / | tail -1 | tr -dc 0-9)
+[ "$uso" -ge 90 ] && curl -s -X POST $HOST/notify \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d "{\"text\":\"disk at ${uso}% on /\",\"source\":\"$(hostname)\",\"key\":\"disk\"}"
+```
+
 The token does not have to sit in `config.json`. `WPP_TOKEN` or
 `CLAUDE_WPP_API_TOKEN` in the environment takes precedence over the file, so it
 can live wherever the machine already keeps its secrets — the unit reads
@@ -418,6 +447,7 @@ daemon refuses to start without one rather than serving an open API.
 | `apiHost` | `127.0.0.1` | address the API binds to |
 | `apiPort` | `8787` | port the API binds to |
 | `apiToken` | — | required; `WPP_TOKEN` in the environment overrides it; refuses the exact placeholder from `config.example.json` |
+| `notifyDedupMs` | `600000` (10 min) | window in which `POST /notify` drops repeats of the same `key` |
 
 ## Operation
 

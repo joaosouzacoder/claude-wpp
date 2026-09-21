@@ -21,6 +21,9 @@ const DEFAULTS = {
   // a run of message bubbles: two full bubbles is where reading on a phone
   // stops working.
   attachAboveChars: 7000,
+  // POST /notify with a `key`: repeats of that key inside this window are
+  // dropped, so a check that fails every minute pings once, not sixty times.
+  notifyDedupMs: 10 * 60 * 1000,
   openaiApiKey: null,
   transcribeModel: 'gpt-4o-transcribe',
   transcribeTimeoutMs: 120000,
