@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { citacaoDe } from './whatsapp.js'
 
 const CONTEXTO_MAX = 60
@@ -31,11 +32,21 @@ export function parseVeredito(texto) {
   }
 }
 
+export function comoQuem(job) {
+  return job.sender === 'bot' ? 'pelo bot' : 'como você'
+}
+
+function conteudoDo(job) {
+  const anexo = job.attachment_name ? `📎 ${job.attachment_name}` : null
+  if (anexo && !job.body) return anexo
+  return anexo ? `${anexo} — "${job.body}"` : `"${job.body}"`
+}
+
 export function formatDraft(job, timezone) {
   const linhas = [`[wpp] rascunho #${job.id} → ${nomeDo(job)}`]
   if (job.scheduled_for) linhas.push(`sai em ${quando(job.scheduled_for, timezone)}`)
   if (job.kind === 'conditional') linhas.push(`antes de mandar, verifica: ${job.check_prompt}`)
-  linhas.push('', `"${job.body}"`, '', `/ok ${job.id} aprova · /no ${job.id} descarta`)
+  linhas.push('', conteudoDo(job), '', `/ok ${job.id} manda como você · /bot ${job.id} manda pelo bot · /no ${job.id} descarta`)
   return linhas.join('\n')
 }
 
@@ -45,7 +56,7 @@ export function formatQueue({ pending, scheduled }, timezone) {
   const linha = (j) => {
     const marca = j.kind === 'conditional' ? ' (verifica antes)' : ''
     const hora = j.scheduled_for ? `${quando(j.scheduled_for, timezone)} · ` : ''
-    return `#${j.id} ${hora}${nomeDo(j)}${marca}: "${j.body}"`
+    return `#${j.id} ${hora}${nomeDo(j)}${marca}: ${conteudoDo(j)}`
   }
 
   const partes = []
@@ -54,7 +65,15 @@ export function formatQueue({ pending, scheduled }, timezone) {
   return partes.join('\n')
 }
 
-export function createWpp({ db, outbox, wa, run, config, now = () => Math.floor(Date.now() / 1000) }) {
+// `wa` is the owner's own account; `bot` the bot's, for drafts approved with
+// /bot instead of /ok.
+export function createWpp({ db, outbox, wa, bot = null, run, config, now = () => Math.floor(Date.now() / 1000) }) {
+  const contaDe = (job) => {
+    if (job.sender !== 'bot') return wa
+    if (!bot) throw new Error('conta do bot indisponível para este envio')
+    return bot
+  }
+
   const tz = config.timezone
   const buscarCitada = db.prepare('SELECT * FROM messages WHERE chat_jid = ? AND wa_id = ?')
   const conversaDesde = db.prepare(`
@@ -64,8 +83,20 @@ export function createWpp({ db, outbox, wa, run, config, now = () => Math.floor(
 
   async function send(job) {
     try {
-      const citada = job.quoted_wa_id ? buscarCitada.get(job.chat_jid, job.quoted_wa_id) : null
-      const waId = await wa.sendText(job.chat_jid, job.body, { quoted: citacaoDe(citada) })
+      const conta = contaDe(job)
+      if (job.attachment_path) {
+        const waId = await conta.sendDocument(job.chat_jid, {
+          content: readFileSync(job.attachment_path),
+          fileName: job.attachment_name,
+          caption: job.body || undefined,
+          mimetype: job.attachment_mimetype ?? 'application/octet-stream',
+        })
+        return { ok: true, waId }
+      }
+      // A quote points at a message in the owner's own history, which the
+      // bot's account cannot reference.
+      const citada = job.quoted_wa_id && job.sender !== 'bot' ? buscarCitada.get(job.chat_jid, job.quoted_wa_id) : null
+      const waId = await conta.sendText(job.chat_jid, job.body, { quoted: citacaoDe(citada) })
       return { ok: true, waId }
     } catch (err) {
       return { ok: false, error: err.message ?? String(err) }
@@ -77,7 +108,8 @@ export function createWpp({ db, outbox, wa, run, config, now = () => Math.floor(
     if (!job) return { ok: false, error: 'não tem nada recente para desfazer.' }
 
     try {
-      await wa.deleteMessage(job.chat_jid, job.sent_wa_id)
+      // Only the account that sent a message can delete it for everyone.
+      await contaDe(job).deleteMessage(job.chat_jid, job.sent_wa_id)
     } catch (err) {
       return { ok: false, error: err.message ?? String(err) }
     }

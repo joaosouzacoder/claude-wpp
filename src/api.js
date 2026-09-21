@@ -2,6 +2,8 @@ import { createServer } from 'node:http'
 import { timingSafeEqual } from 'node:crypto'
 import { mimetypeDe } from './mimetypes.js'
 import { pareceNumero } from './contacts.js'
+import { jidDe } from './whatsapp.js'
+import { saveMedia } from './media.js'
 
 export { mimetypeDe }
 
@@ -70,6 +72,7 @@ export function createApi({
   personalState = null,
   notifier = null,
   contacts = null,
+  mediaDir = null,
 }) {
   const json = (res, status, corpo) => {
     const texto = JSON.stringify(corpo)
@@ -90,6 +93,24 @@ export function createApi({
       return { erro: [409, { ok: false, error: `"${to}" bate com mais de um contato; seja mais específico`, candidates: r.candidatos }] }
     }
     return { erro: [404, { ok: false, error: `não achei nenhum contato chamado "${to}"` }] }
+  }
+
+  // `confirm: true` on /send or /send-file: nothing goes out here. The message
+  // becomes a draft, the owner sees it on WhatsApp, and decides there — /ok as
+  // himself, /bot as the bot, /no to drop it.
+  const criarRascunho = async (res, alvo, { body, attachment = null }) => {
+    let rascunho
+    try {
+      rascunho = outbox.create({ chatJid: jidDe(alvo.destino), chatName: alvo.nome ?? null, body, attachment })
+    } catch (err) {
+      return json(res, 400, { ok: false, error: err.message })
+    }
+    try {
+      await onDraft?.(rascunho)
+    } catch {
+      // Losing the notification must not lose the draft; /schedulers finds it.
+    }
+    return json(res, 202, { ok: true, draft: rascunho.id, ...(alvo.nome ? { to: alvo.nome } : {}) })
   }
 
   const server = createServer(async (req, res) => {
@@ -212,14 +233,17 @@ export function createApi({
       if (!bytes) return json(res, 400, { ok: false, error: 'content tem que ser o arquivo em base64' })
       const alvo = resolverDestino(to)
       if (alvo.erro) return json(res, ...alvo.erro)
+      const legenda = typeof caption === 'string' && caption ? caption : undefined
+      const tipo = typeof mimetype === 'string' && mimetype ? mimetype : mimetypeDe(fileName)
+
+      if (corpo.confirm === true) {
+        if (!outbox || !mediaDir) return json(res, 503, { ok: false, error: 'rascunho exige a conta pessoal pareada' })
+        const caminho = saveMedia({ dir: mediaDir, buffer: bytes, mimetype: tipo, kind: 'document', fileName })
+        return criarRascunho(res, alvo, { body: legenda ?? '', attachment: { path: caminho, name: fileName, mimetype: tipo } })
+      }
 
       try {
-        await whatsapp.sendDocument(alvo.destino, {
-          content: bytes,
-          fileName,
-          caption: typeof caption === 'string' && caption ? caption : undefined,
-          mimetype: typeof mimetype === 'string' && mimetype ? mimetype : mimetypeDe(fileName),
-        })
+        await whatsapp.sendDocument(alvo.destino, { content: bytes, fileName, caption: legenda, mimetype: tipo })
       } catch (err) {
         return json(res, 502, { ok: false, error: err.message })
       }
@@ -241,6 +265,11 @@ export function createApi({
       if (!to || !text) return json(res, 400, { ok: false, error: 'to e text são obrigatórios' })
       const alvo = resolverDestino(to)
       if (alvo.erro) return json(res, ...alvo.erro)
+
+      if (corpo.confirm === true) {
+        if (!outbox) return json(res, 503, { ok: false, error: 'rascunho exige a conta pessoal pareada' })
+        return criarRascunho(res, alvo, { body: String(text) })
+      }
 
       try {
         await whatsapp.sendText(alvo.destino, String(text))

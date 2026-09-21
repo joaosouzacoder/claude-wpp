@@ -40,7 +40,8 @@ systemctl --user start claude-wpp
 | `/descartar [name]` | forgets the request a restart killed mid-run |
 | `/help` | lists the commands |
 | `/wpp <request>` | reads your own WhatsApp and prepares a message (see below) |
-| `/ok <n>` | approves draft `n` — the only way anything gets sent |
+| `/ok <n>` | approves draft `n` and sends it **as you**, from your own account — the only way anything gets sent |
+| `/bot <n>` | approves draft `n` and sends it from the **bot's** number instead |
 | `/edit <n> <text>` | rewrites draft `n`; it needs `/ok` again |
 | `/no <n>` | discards a draft or cancels a schedule |
 | `/schedulers` | what is waiting for your approval and what is scheduled |
@@ -446,6 +447,14 @@ account has to be paired), ignoring case and accents: `"fulano bailão"` finds
 name. Exactly one match is sent, and the response names it
 (`{"ok":true,"to":"Fulano Bailāo"}`); several matches are a `409` listing up to
 five `candidates` and nothing is sent; none is a `404`.
+
+Add `"confirm": true` to either route and nothing is sent at all: the message
+— or the file, kept under the media directory until then — becomes a draft,
+it shows up on WhatsApp, and you decide there who it goes out as: `/ok <n>`
+sends it **as you**, from your own account; `/bot <n>` from the bot's number;
+`/no <n>` drops it. The response is `202` with the draft number. This needs the
+personal account paired (`503` otherwise). Without `confirm`, both routes keep
+sending immediately as the bot.
 
 `POST /outbox` proposes a draft directly. It never sends either: the draft waits
 for `/ok` on WhatsApp. It is how `agent/propose.mjs` works, and the only write

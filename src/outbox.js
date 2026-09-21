@@ -4,14 +4,19 @@
 // "as soon as it is approved".
 
 const TIPOS = new Set(['message', 'conditional'])
+// Who a draft goes out as is the owner's call at approval time, not the
+// proposer's: `me` is his own account, `bot` the bot's.
+const REMETENTES = new Set(['me', 'bot'])
 
 export function createOutbox({ db, now = () => Math.floor(Date.now() / 1000) }) {
   const stmt = {
     insert: db.prepare(`
       INSERT INTO outbox (kind, chat_jid, chat_name, body, quoted_wa_id, check_prompt,
-                          scheduled_for, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+                          scheduled_for, status, created_at,
+                          attachment_path, attachment_name, attachment_mimetype)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
     `),
+    aprovar: db.prepare("UPDATE outbox SET status = 'approved', decided_at = ?, sender = ? WHERE id = ? AND status = 'pending'"),
     get: db.prepare('SELECT * FROM outbox WHERE id = ?'),
     pending: db.prepare("SELECT * FROM outbox WHERE status = 'pending' ORDER BY id"),
     scheduled: db.prepare(`
@@ -49,16 +54,20 @@ export function createOutbox({ db, now = () => Math.floor(Date.now() / 1000) }) 
   }
 
   return {
-    create({ kind = 'message', chatJid, chatName = null, body, quotedWaId = null, checkPrompt = null, scheduledFor = null } = {}) {
+    // `attachment` ({ path, name, mimetype }) makes it a file draft; the text
+    // then becomes its caption and may be empty.
+    create({ kind = 'message', chatJid, chatName = null, body, quotedWaId = null, checkPrompt = null, scheduledFor = null, attachment = null } = {}) {
       if (!TIPOS.has(kind)) throw new Error(`tipo de tarefa desconhecido: ${kind}`)
       if (!String(chatJid ?? '').trim()) throw new Error('rascunho sem destino')
-      if (!String(body ?? '').trim()) throw new Error('rascunho sem texto')
+      if (!attachment && !String(body ?? '').trim()) throw new Error('rascunho sem texto')
+      if (attachment && (!attachment.path || !attachment.name)) throw new Error('anexo sem arquivo')
       if (kind === 'conditional' && !String(checkPrompt ?? '').trim()) {
         throw new Error('tarefa condicional exige a pergunta de verificação')
       }
 
       const { lastInsertRowid } = stmt.insert.run(
-        kind, chatJid, chatName, String(body).trim(), quotedWaId, checkPrompt, scheduledFor, now(),
+        kind, chatJid, chatName, String(body ?? '').trim(), quotedWaId, checkPrompt, scheduledFor, now(),
+        attachment?.path ?? null, attachment?.name ?? null, attachment?.mimetype ?? null,
       )
       return stmt.get.get(lastInsertRowid)
     },
@@ -69,7 +78,11 @@ export function createOutbox({ db, now = () => Math.floor(Date.now() / 1000) }) 
     due: (ts) => stmt.due.all(ts),
     lastSent: () => stmt.lastSent.get() ?? null,
 
-    approve: (id) => transicionar(id, 'pending', 'approved'),
+    approve(id, sender = 'me') {
+      if (!REMETENTES.has(sender)) throw new Error(`remetente desconhecido: ${sender}`)
+      const { changes } = stmt.aprovar.run(now(), sender, id)
+      return changes > 0 ? stmt.get.get(id) : null
+    },
     reject: (id) => transicionar(id, 'pending', 'rejected'),
     cancel: (id) => transicionar(id, 'approved', 'canceled'),
 

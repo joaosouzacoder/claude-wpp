@@ -40,7 +40,8 @@ const AJUDA = [
   '',
   'Sua conta pessoal:',
   '/wpp <pedido> — lê suas conversas e prepara uma mensagem',
-  '/ok <n> — aprova o rascunho n (só assim ele sai)',
+  '/ok <n> — aprova o rascunho n e manda como você (só assim ele sai)',
+  '/bot <n> — aprova o rascunho n e manda pelo número do bot',
   '/edit <n> <texto> — reescreve o rascunho n (volta a precisar de /ok)',
   '/no <n> — descarta o rascunho ou cancela o agendamento n',
   '/schedulers — o que espera seu ok e o que está agendado',
@@ -442,15 +443,13 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
     },
 
     async ok(args) {
-      if (!semConta()) return
-      const id = numeroDoRascunho(args[0])
-      if (!id) return reply('Uso: /ok <número do rascunho>')
+      return aprovar(args, 'me', '/ok')
+    },
 
-      const job = wpp.outbox.approve(id)
-      if (!job) return reply(`Não achei rascunho pendente #${id}. Manda /schedulers.`)
-
-      await reply(job.scheduled_for ? `Aprovado. #${id} sai na hora marcada.` : `Aprovado, mandando #${id}.`)
-      return wpp.tick()
+    // Same approval, but out of the bot's account instead of the owner's —
+    // chosen here, at the moment of approving, not by whoever proposed it.
+    async bot(args) {
+      return aprovar(args, 'bot', '/bot')
     },
 
     // Correcting the wording used to mean discarding and asking again. The edit
@@ -493,6 +492,19 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
       if (!r.ok) return reply(`Não deu pra desfazer: ${r.error}`)
       return reply(`Apaguei a mensagem para ${r.job.chat_name || r.job.chat_jid}: "${r.job.body}"`)
     },
+  }
+
+  async function aprovar(args, remetente, comando) {
+    if (!semConta()) return
+    const id = numeroDoRascunho(args[0])
+    if (!id) return reply(`Uso: ${comando} <número do rascunho>`)
+
+    const job = wpp.outbox.approve(id, remetente)
+    if (!job) return reply(`Não achei rascunho pendente #${id}. Manda /schedulers.`)
+
+    const como = remetente === 'bot' ? 'pelo bot' : 'como você'
+    await reply(job.scheduled_for ? `Aprovado ${como}. #${id} sai na hora marcada.` : `Aprovado, mandando #${id} ${como}.`)
+    return wpp.tick()
   }
 
   function semConta() {

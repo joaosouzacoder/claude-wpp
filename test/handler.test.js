@@ -646,8 +646,27 @@ test('/ok aprova e faz a mensagem sair na hora', async () => {
   const d = rascunho()
   await handler.handle(`/ok ${d.id}`)
   assert.equal(outbox.get(d.id).status, 'approved')
+  assert.equal(outbox.get(d.id).sender, 'me')
   assert.equal(passadas.length, 1)
-  assert.match(ditos.at(-1), /aprovad/i)
+  assert.match(ditos.at(-1), /aprovad.*como você/i)
+})
+
+test('/bot aprova o mesmo rascunho para sair pelo bot', async () => {
+  const { handler, outbox, ditos, passadas, rascunho } = montarComWpp()
+  const d = rascunho()
+  await handler.handle(`/bot ${d.id}`)
+  assert.equal(outbox.get(d.id).status, 'approved')
+  assert.equal(outbox.get(d.id).sender, 'bot')
+  assert.equal(passadas.length, 1)
+  assert.match(ditos.at(-1), /pelo bot/)
+})
+
+test('/bot depois de /ok não troca a decisão já tomada', async () => {
+  const { handler, outbox, rascunho } = montarComWpp()
+  const d = rascunho()
+  await handler.handle(`/ok ${d.id}`)
+  await handler.handle(`/bot ${d.id}`)
+  assert.equal(outbox.get(d.id).sender, 'me')
 })
 
 test('/ok em rascunho que não existe não inventa nada', async () => {
