@@ -3,6 +3,8 @@
 // that is not clearly a command answers NENHUM and goes on to the session as
 // before — so a doubtful reading costs one normal prompt, never a wrong send.
 
+import { execCli } from './claude.js'
+
 const NENHUM = 'NENHUM'
 // Long text is a prompt for the session, not an instruction to the bot.
 export const MAX_CHARS_INTENCAO = 400
@@ -59,21 +61,15 @@ export function textoCitado(raw) {
   return q?.conversation ?? q?.extendedTextMessage?.text ?? q?.documentMessage?.caption ?? null
 }
 
-const ENDPOINT = 'https://api.openai.com/v1/chat/completions'
-
-// The same OpenAI key that already transcribes audio: a CLI `claude -p` spends
-// over ten seconds just starting up, and this sits in front of every message.
-export function classificadorOpenAI({ apiKey, model, timeoutMs, fetchImpl = fetch }) {
+// A one-shot `claude -p` on the owner's own subscription, not a paid API: he
+// would rather wait than pay per token. User settings and MCP servers are
+// skipped because loading them roughly doubles the startup time, and a
+// classifier needs neither.
+export function classificadorClaude({ bin, model, cwd, timeoutMs, exec = execCli }) {
   return async (prompt) => {
-    const resposta = await fetchImpl(ENDPOINT, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ model, temperature: 0, max_tokens: 200, messages: [{ role: 'user', content: prompt }] }),
-      signal: AbortSignal.timeout(timeoutMs),
-    })
-    if (!resposta.ok) throw new Error(`a OpenAI respondeu ${resposta.status}`)
-    const corpo = await resposta.json()
-    return String(corpo?.choices?.[0]?.message?.content ?? '')
+    const r = await exec(bin, ['-p', '--model', model, '--setting-sources', 'project', '--strict-mcp-config', prompt], { cwd, timeoutMs })
+    if (r.code !== 0) throw new Error(r.timedOut ? 'tempo esgotado' : (String(r.stderr ?? '').trim().slice(0, 200) || `código ${r.code}`))
+    return r.stdout
   }
 }
 

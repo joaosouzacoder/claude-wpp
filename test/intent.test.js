@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createIntent, lerIntencao, promptIntencao, textoCitado, rascunhoNomeado, classificadorOpenAI, MAX_CHARS_INTENCAO } from '../src/intent.js'
+import { createIntent, lerIntencao, promptIntencao, textoCitado, rascunhoNomeado, classificadorClaude, MAX_CHARS_INTENCAO } from '../src/intent.js'
 
 const conhecidos = new Set(['ok', 'bot', 'no', 'wpp', 'ls'])
 
@@ -47,17 +47,22 @@ test('createIntent drops a guessed draft number', async () => {
   assert.equal(await interpretar({ texto: 'joga fora o rascunho', pendentes: [{ id: 28 }, { id: 31 }] }), null)
 })
 
-test('classificadorOpenAI returns the reply text and fails on an error status', async () => {
-  const pedidos = []
-  const ok = classificadorOpenAI({
-    apiKey: 'sk-teste', model: 'm', timeoutMs: 1000,
-    fetchImpl: async (url, init) => { pedidos.push(JSON.parse(init.body)); return { ok: true, json: async () => ({ choices: [{ message: { content: '/ls' } }] }) } },
+test('classificadorClaude runs claude -p and fails on a non-zero exit or timeout', async () => {
+  const chamadas = []
+  const ok = classificadorClaude({
+    bin: 'claude', model: 'haiku', cwd: '/tmp', timeoutMs: 1000,
+    exec: async (bin, args, opts) => { chamadas.push({ bin, args, opts }); return { code: 0, stdout: '/ls\n', stderr: '' } },
   })
-  assert.equal(await ok('prompt'), '/ls')
-  assert.equal(pedidos[0].messages[0].content, 'prompt')
+  assert.equal(await ok('prompt'), '/ls\n')
+  assert.equal(chamadas[0].bin, 'claude')
+  assert.deepEqual(chamadas[0].args.slice(0, 3), ['-p', '--model', 'haiku'])
+  assert.equal(chamadas[0].args.at(-1), 'prompt')
+  assert.deepEqual(chamadas[0].opts, { cwd: '/tmp', timeoutMs: 1000 })
 
-  const erro = classificadorOpenAI({ apiKey: 'sk-teste', model: 'm', timeoutMs: 1000, fetchImpl: async () => ({ ok: false, status: 429 }) })
-  await assert.rejects(erro('prompt'), /429/)
+  const falha = classificadorClaude({ bin: 'claude', model: 'haiku', cwd: '/tmp', timeoutMs: 1000, exec: async () => ({ code: 1, stdout: '', stderr: 'not logged in' }) })
+  await assert.rejects(falha('prompt'), /not logged in/)
+  const lento = classificadorClaude({ bin: 'claude', model: 'haiku', cwd: '/tmp', timeoutMs: 1000, exec: async () => ({ code: null, stdout: '', stderr: '', timedOut: true }) })
+  await assert.rejects(lento('prompt'), /tempo esgotado/)
 })
 
 test('a failed or skipped classification is "not a command"', async () => {
