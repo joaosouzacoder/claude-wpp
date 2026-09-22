@@ -8,7 +8,7 @@ import { createApi } from './api.js'
 import { runClaude, attachClaude, listAgents } from './claude.js'
 import { classificadorClaude } from './intent.js'
 import { transcribe } from './transcribe.js'
-import { formatDraft } from './wpp.js'
+import { formatDraft, formatDirect } from './wpp.js'
 import { contaPessoalPareada, montarContaPessoal } from './boot.js'
 import { limparMediaAntiga } from './media.js'
 import { createNotifier } from './notify.js'
@@ -163,6 +163,12 @@ async function main() {
     sessionCount: () => sessions.list().length,
     outbox: pessoal?.outbox ?? null,
     onDraft: pessoal ? (job) => avisar(formatDraft(job, config.timezone)) : null,
+    onDirect: pessoal
+      ? async (job) => {
+        await pessoal.scheduler.tick()
+        await avisar(formatDirect(job, config.timezone))
+      }
+      : null,
     // Rebuilding the request as `/wpp <pedido>` and handing it to the same
     // handler is what makes the HTTP route and the typed command the same
     // thing: one implementation, one set of instructions, no way to drift. It
