@@ -69,6 +69,20 @@ const ESQUEMA = [
      last_sent_at INTEGER NOT NULL
    )`,
 
+  // What the bot and that person have said to each other. Without it every
+  // message the bot writes reads like a first contact — it greets, it
+  // re-introduces itself — and it has no way to tell a question it must pass
+  // on from small talk it can close by itself.
+  `CREATE TABLE IF NOT EXISTS bot_messages (
+     id      INTEGER PRIMARY KEY,
+     number  TEXT NOT NULL,
+     from_me INTEGER NOT NULL,
+     body    TEXT NOT NULL,
+     ts      INTEGER NOT NULL
+   )`,
+
+  'CREATE INDEX IF NOT EXISTS idx_bot_messages_number ON bot_messages(number, ts)',
+
   // A reply the bot passed on to the owner, keyed by the id of the message he
   // sees — quoting that message is how he answers the right person.
   `CREATE TABLE IF NOT EXISTS relay (

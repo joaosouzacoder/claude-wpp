@@ -505,17 +505,35 @@ path Claude is given.
 ### Replies to the bot
 
 When someone the bot has written to — through `/send`, `/send-file` or a
-draft approved with `/bot` — answers it, you get their message in the bot's
-chat, numbered. Quote it (or send `/r <n> <text>`) to answer: your text,
-typed or dictated, is rewritten in formal Portuguese by Claude and sent from
-the bot's number right away, and the bot shows you what went out. If the
-rewrite fails, nothing is sent — your raw words never go out through the bot.
+draft approved with `/bot` — answers it, the message is triaged first.
+
+- Something that needs nobody — thanks, a compliment, a greeting, "got it" —
+  the bot answers by itself, formally, and tells you what it said.
+- Anything else — a request, a question, a deadline, an invitation, anything
+  that needs your information, opinion, decision or word, and **every** doubt
+  or failure — reaches you numbered, with a one-line note of what they want.
+  Quote it (or send `/r <n> <text>`) to answer: your text, typed or dictated,
+  is rewritten in formal Portuguese by Claude and sent from the bot's number
+  right away. If the rewrite fails, nothing is sent — your raw words never go
+  out through the bot.
+
+Both the triage and the formal rewrite read the bot's conversation with that
+person (`bot_messages`), so the bot continues a conversation instead of
+greeting them again on every message. The `/wpp` session reads the same table
+when it writes a `--body-bot`.
+
+The triage model is the one place a third party's words reach Claude. It runs
+with **no tools at all** (`claude -p --tools ''`), sees only that one
+conversation, and can produce exactly two outcomes: one message back to that
+same person, or "tell the owner". It cannot reach a session, your own
+WhatsApp, the API or this machine, and a message trying to talk it into any
+of that is a reason to alert you, not to comply. Anything it answers that is
+not a clear decision falls back to alerting you.
 
 Only people the bot has written to are relayed; anyone else writing to the
-bot is ignored, as before, and groups never are. Nothing on this path reaches
-a Claude session: a third party's text is only shown to you. A sender that
-arrives only as an `@lid`, without their number alongside, cannot be matched
-and is not relayed.
+bot is ignored, as before, and groups never are. A sender that arrives only
+as an `@lid`, without their number alongside, cannot be matched and is not
+relayed.
 
 ### Alerts: `POST /notify`
 

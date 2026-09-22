@@ -34,6 +34,11 @@ const DEFAULTS = {
   // timeout the text simply goes on to the session.
   intentModel: 'haiku',
   intentTimeoutMs: 60000,
+  // Deciding whether a message someone sent the bot needs the owner, and
+  // writing the small talk that does not. Failure or timeout means "tell the
+  // owner", so this one can afford to be the better model.
+  triageModel: 'sonnet',
+  triageTimeoutMs: 3 * 60 * 1000,
   personalNumber: null,
   timezone: 'America/Sao_Paulo',
   schedulerIntervalMs: 30000,
