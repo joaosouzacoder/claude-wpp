@@ -526,7 +526,7 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
         await reply(`Formalizando #${id} antes de mandar pelo bot…`)
         let formal
         try {
-          formal = await wpp.formalizar({ nome: atual.chat_name, texto: atual.body })
+          formal = await wpp.formalizar({ nome: atual.chat_name, texto: atual.body, destino: atual.chat_jid })
         } catch (err) {
           return reply(`Não consegui formalizar #${id} (${err.message}) — nada foi enviado.`)
         }

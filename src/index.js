@@ -5,7 +5,7 @@ import { createSessions } from './sessions.js'
 import { createHandler } from './handler.js'
 import { createWhatsapp, aceitaDoBot } from './whatsapp.js'
 import { createApi } from './api.js'
-import { runClaude, attachClaude, listAgents } from './claude.js'
+import { runClaude, attachClaude, listAgents, execCli } from './claude.js'
 import { classificadorClaude } from './intent.js'
 import { transcribe } from './transcribe.js'
 import { formatDraft, formatDirect } from './wpp.js'
@@ -76,12 +76,12 @@ async function main() {
     ...whatsapp,
     async sendText(destino, texto, opts) {
       const id = await whatsapp.sendText(destino, texto, opts)
-      relay?.noteSent(destino)
+      relay?.noteSent(destino, texto)
       return id
     },
     async sendDocument(destino, doc) {
       const id = await whatsapp.sendDocument(destino, doc)
-      relay?.noteSent(destino)
+      relay?.noteSent(destino, [doc?.fileName ? `(arquivo: ${doc.fileName})` : null, doc?.caption].filter(Boolean).join(' '))
       return id
     },
   }
@@ -96,8 +96,17 @@ async function main() {
     return r.text
   }
 
+  // Triage and small talk read a stranger's words, so this one runs with no
+  // tools at all: it can produce text and nothing else.
+  const triagemComClaude = async (prompt) => {
+    const r = await execCli(config.claudeBin, ['-p', '--model', config.triageModel, '--tools', '', '--setting-sources', 'project', '--strict-mcp-config', prompt], { cwd: dirFormal, timeoutMs: config.triageTimeoutMs })
+    if (r.code !== 0) throw new Error(r.timedOut ? 'tempo esgotado' : (String(r.stderr ?? '').trim().slice(0, 200) || `código ${r.code}`))
+    return r.stdout
+  }
+
   relay = createRelay({
     db: relayDb,
+    triage: triagemComClaude,
     ownerNumber: config.authorizedNumber,
     notifyOwner: avisar,
     sendAsBot: (destino, texto) => bot.sendText(destino, texto),
@@ -147,7 +156,9 @@ async function main() {
       tick: pessoal.scheduler.tick,
       timezone: config.timezone,
       undo: pessoal.wpp.undo,
-      formalizar: async ({ nome, texto }) => limparFormal(await formalizarComClaude(promptFormal({ nome, resposta: texto }))),
+      formalizar: async ({ nome, texto, destino }) => limparFormal(await formalizarComClaude(
+        promptFormal({ nome, resposta: texto, historico: relay.historico(destino) }),
+      )),
     },
   })
 

@@ -115,9 +115,21 @@ is decided only when he approves:
   (see "Writing as the owner"). Goes out with `/ok`, from his account.
 - `--body-bot` — the **formal** version: same content, facts and commitments,
   written as a courteous assistant writing on his behalf. No slang, no
-  nicknames, no emoji; greet the person by name. Goes out with `/bot`, from
-  the bot's number — the recipient may not know that number, so it must read
-  as a proper message from someone speaking for him.
+  nicknames, no emoji. Goes out with `/bot`, from the bot's number — the
+  recipient may not know that number, so it must read as a proper message from
+  someone speaking for him.
+
+  Greet the person by name **only if the bot has not written to them before**.
+  The bot's own conversations are in `bot_messages` (`from_me = 1` is the bot):
+
+  ```sql
+  select from_me, body from bot_messages
+  where number = '5511911111111' order by ts desc limit 10;
+  ```
+
+  If there is a conversation under way there, continue it — no "Olá, Fulano"
+  on every message, which is what a stranger does, not an assistant they have
+  been talking to all morning.
 
 ```bash
 node propose.mjs --to '<chat_jid>' --name 'Líderes' \
