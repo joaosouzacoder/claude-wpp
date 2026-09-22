@@ -66,13 +66,14 @@ on that draft, "avisa a Ana que a reunião mudou" is `/wpp avisa a Ana…`,
 "o que tem pendente?" is `/schedulers`. The bot answers `🗣️ Entendi: /bot 31`
 before running it, so you always see what it understood.
 
-An OpenAI model (`intentModel`, using the same `openaiApiKey` as audio) does
-the reading; it is given the command list, the pending drafts and the message
-you quoted. What it answers is only accepted if it is a known command, and
+A one-shot `claude -p` on your own subscription (`intentModel`, `haiku` by
+default — no paid API tokens) does the reading, which adds about five seconds
+before a message that is not a command reaches the session. It is given the
+command list, the pending drafts and the message you quoted. What it answers is only accepted if it is a known command, and
 `/ok`, `/bot`, `/no` and `/edit` only run on a draft you pointed at — by
 number, by quoting it, or by it being the only one pending — so "joga fora o
 rascunho" with two pending does nothing. Anything else (a coding request, a
-question, a doubt, text over 400 characters, a timeout, no key configured)
+question, a doubt, text over 400 characters, a failure or timeout)
 goes to the active session exactly as before. Images and documents always go
 to the session.
 
