@@ -14,6 +14,7 @@ import { limparMediaAntiga } from './media.js'
 import { createNotifier } from './notify.js'
 import { createContactResolver } from './contacts.js'
 import { createRelay, promptFormal, limparFormal } from './relay.js'
+import { createTasks } from './tasks.js'
 import { openDb } from './db.js'
 import { mkdirSync } from 'node:fs'
 
@@ -65,6 +66,7 @@ async function main() {
   })
 
   const relayDb = openDb(config.dbPath)
+  const tarefas = createTasks({ db: relayDb, timezone: config.timezone })
   const dirFormal = join(config.stateDir, 'formal')
   mkdirSync(dirFormal, { recursive: true })
   let relay = null
@@ -193,6 +195,7 @@ async function main() {
     // session's name, on that session's own clock.
     onDispatch: ({ session, prompt, cwd }) => handler.despacharDeFora({ session, prompt, cwd }),
     onUndo: pessoal ? () => pessoal.wpp.undo() : null,
+    tasks: pessoal ? tarefas : null,
     sessionList: () => sessions.list().map((s) => ({ name: s.name, cwd: s.cwd, busy: Boolean(s.busy) })),
     personalState: pessoal ? () => pessoal.me.state() : null,
     notifier: createNotifier({ send: avisar, dedupMs: config.notifyDedupMs }),
@@ -200,9 +203,23 @@ async function main() {
     mediaDir: config.mediaDir,
   })
 
+  // The hour arriving is the only thing that starts a task; a run that throws
+  // must not take the timer with it, or one bad task silently ends all of them.
+  const relogioTarefas = pessoal
+    ? setInterval(() => {
+      for (const tarefa of tarefas.due()) {
+        tarefas.ranOnce(tarefa.id)
+        handler.rodarTarefa({ id: tarefa.id, prompt: tarefa.prompt, label: tarefa.label })
+          .catch((e) => log.error(`[tarefa ${tarefa.id}] ${e.stack ?? e.message}`))
+      }
+    }, config.schedulerIntervalMs)
+    : null
+  relogioTarefas?.unref?.()
+
   for (const sinal of ['SIGINT', 'SIGTERM']) {
     process.on(sinal, async () => {
       log.info(`recebi ${sinal}, encerrando`)
+      if (relogioTarefas) clearInterval(relogioTarefas)
       pessoal?.scheduler.stop()
       pessoal?.db.close()
       await api.close().catch(() => {})

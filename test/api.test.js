@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { createApi, mimetypeDe, decodificarBase64, nomeDeArquivoValido } from '../src/api.js'
 import { openDb } from '../src/db.js'
 import { createOutbox } from '../src/outbox.js'
+import { createTasks } from '../src/tasks.js'
 import { createNotifier } from '../src/notify.js'
 import { createCapture } from '../src/capture.js'
 import { createContactResolver } from '../src/contacts.js'
@@ -546,6 +547,7 @@ async function subirParaCompor({ now } = {}) {
       ? { ok: false, error: 'essa é a sua própria sessão' }
       : (despachos.push({ session, prompt }), { ok: true, session: session ?? 'ativa' })),
     sessionList: () => [{ name: 'infra', cwd: '/tmp/infra', busy: false }],
+    tasks: createTasks({ db, timezone: 'America/Sao_Paulo' }),
     onDraft: async (job) => { rascunhos.push(job) },
     ...(now ? { now } : {}),
   })
@@ -716,5 +718,35 @@ test('sessions lista o que existe, e as rotas novas exigem token', async () => {
     assert.equal(sem.status, 401, rota)
   }
   assert.equal((await fetch(`${url}/sessions`)).status, 401)
+  await servidor.close()
+})
+
+test('tasks agenda, lista e encerra', async () => {
+  const { servidor, post, url } = await subirParaCompor()
+  const criada = await (await post('/tasks', { prompt: 'confere o chamado e me conta', dailyAt: '09:00', label: 'cota aws' })).json()
+  assert.equal(criada.dailyAt, '09:00')
+  assert.ok(criada.nextRun > Math.floor(Date.now() / 1000))
+
+  const lista = await (await fetch(`${url}/tasks`, { headers: { authorization: 'Bearer segredo' } })).json()
+  assert.equal(lista.tasks.length, 1)
+  assert.equal(lista.tasks[0].label, 'cota aws')
+
+  const fim = await (await post('/tasks/close', { id: criada.id, done: true })).json()
+  assert.equal(fim.status, 'feita')
+  const depois = await (await fetch(`${url}/tasks`, { headers: { authorization: 'Bearer segredo' } })).json()
+  assert.deepEqual(depois.tasks, [])
+  assert.equal((await post('/tasks/close', { id: criada.id })).status, 404, 'não encerra duas vezes')
+  await servidor.close()
+})
+
+test('tasks recusa pedido vazio, horário inválido, sem horário e sem token', async () => {
+  const { servidor, post, url } = await subirParaCompor()
+  assert.equal((await post('/tasks', { prompt: 'x' })).status, 400)
+  assert.equal((await post('/tasks', { prompt: '   ', dailyAt: '09:00' })).status, 400)
+  assert.equal((await post('/tasks', { prompt: 'x', dailyAt: '25:00' })).status, 400)
+  assert.equal((await post('/tasks', { prompt: 'x', at: Math.floor(Date.now() / 1000) - 60 })).status, 400)
+
+  const sem = await fetch(`${url}/tasks`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+  assert.equal(sem.status, 401)
   await servidor.close()
 })

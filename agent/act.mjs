@@ -18,7 +18,12 @@ const USO = `uso:
   node act.mjs approve --id <n> [--as me|bot]
   node act.mjs undo
   node act.mjs sessions
-  node act.mjs dispatch --session <nome> --prompt "<pedido>" [--cwd <dir>]`
+  node act.mjs dispatch --session <nome> --prompt "<pedido>" [--cwd <dir>]
+  node act.mjs tarefa --daily 09:00 --prompt "<o que fazer>" [--label "<apelido>"]
+  node act.mjs tarefa --at 2026-09-23T09:00:00-03:00 --prompt "<o que fazer>"
+  node act.mjs tarefas
+  node act.mjs tarefa-fim --id <n>       # já aconteceu, não repete mais
+  node act.mjs tarefa-cancela --id <n>`
 
 const config = loadConfig()
 const base = `http://${config.apiHost}:${config.apiPort}`
@@ -63,6 +68,41 @@ if (acao === 'approve') {
   }
   const r = await chamar('/dispatch', { session: pegar('session'), prompt, cwd: pegar('cwd') })
   console.log(`despachado para ${r.session}; a resposta chega no WhatsApp com o nome da sessão na frente.`)
+} else if (acao === 'tarefa') {
+  const prompt = pegar('prompt')
+  const daily = pegar('daily')
+  const quando = pegar('at')
+  if (!prompt || (!daily && !quando)) {
+    console.error(USO)
+    process.exit(1)
+  }
+  let at = null
+  if (quando) {
+    const t = new Date(quando)
+    if (Number.isNaN(t.getTime())) {
+      console.error(`não entendi a data "${quando}". Use ISO 8601 com fuso, ex.: 2026-09-23T09:00:00-03:00`)
+      process.exit(1)
+    }
+    at = Math.floor(t.getTime() / 1000)
+  }
+  const r = await chamar('/tasks', { prompt, label: pegar('label'), dailyAt: daily, at })
+  const proximo = new Date(r.nextRun * 1000).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+  console.log(`tarefa #${r.id} agendada${r.dailyAt ? ` todo dia às ${r.dailyAt}` : ''}; a primeira vez é ${proximo}.`)
+} else if (acao === 'tarefas') {
+  const r = await chamar('/tasks')
+  if (!r.tasks.length) console.log('(nada agendado)')
+  for (const t of r.tasks) {
+    const proximo = new Date(t.next_run * 1000).toLocaleString('pt-BR', { timeZone: t.tz ?? 'America/Sao_Paulo' })
+    console.log(`#${t.id}\t${t.daily_at ? `todo dia ${t.daily_at}` : 'uma vez'}\tpróxima: ${proximo}\t${t.label ?? t.prompt.slice(0, 60)}`)
+  }
+} else if (acao === 'tarefa-fim' || acao === 'tarefa-cancela') {
+  const id = Number(String(pegar('id') ?? '').replace(/[^0-9]/g, ''))
+  if (!id) {
+    console.error(USO)
+    process.exit(1)
+  }
+  const r = await chamar('/tasks/close', { id, done: acao === 'tarefa-fim' })
+  console.log(`tarefa #${r.id}: ${r.status}.`)
 } else {
   console.error(USO)
   process.exit(1)

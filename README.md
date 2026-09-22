@@ -94,6 +94,21 @@ sends it, then shows you exactly what went out — that is what "no commands"
 costs. `undo` takes back the last one. It proposes instead of sending when it
 is not sure: an ambiguous recipient, or content it could not confirm.
 
+### Tasks: something that repeats, or happens later
+
+"Todo dia às 9 confere o chamado e me conta" is a task, not a cron line. The
+assistant schedules it with `act.mjs tarefa --daily 09:00 --prompt "…"`; at
+that hour the sentence is handed back to its own session, with all its tools,
+and it answers in the chat. `act.mjs tarefas` lists what is scheduled, which
+makes it the one true answer to "o que está agendado?", and the assistant
+closes a task with `tarefa-fim` once the thing it was watching has happened.
+
+Hours are wall time in `timezone`, computed per run, so a daily task keeps its
+hour across a DST change. A one-off task disappears after it runs. The
+assistant is told never to write to the host's crontab: the one time it did,
+the shell script it wrote misread an answer, deleted its own cron line and
+messaged him something this session then contradicted.
+
 ### Commands in plain words (without the assistant)
 
 With the personal account paired, the assistant above reads everything and
