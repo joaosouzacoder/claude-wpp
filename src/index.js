@@ -188,6 +188,12 @@ async function main() {
     onWpp: pessoal
       ? (pedido) => { handler.handle(`/wpp ${pedido}`).catch((e) => log.error(e.stack ?? e.message)) }
       : null,
+    // The butler's hands: it hands work to a project session the same way a
+    // typed `@sessão` does, so the reply reaches the owner labelled with that
+    // session's name, on that session's own clock.
+    onDispatch: ({ session, prompt, cwd }) => handler.despacharDeFora({ session, prompt, cwd }),
+    onUndo: pessoal ? () => pessoal.wpp.undo() : null,
+    sessionList: () => sessions.list().map((s) => ({ name: s.name, cwd: s.cwd, busy: Boolean(s.busy) })),
     personalState: pessoal ? () => pessoal.me.state() : null,
     notifier: createNotifier({ send: avisar, dedupMs: config.notifyDedupMs }),
     contacts: pessoal ? createContactResolver(pessoal.db) : null,

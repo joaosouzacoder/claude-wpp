@@ -58,27 +58,48 @@ big tables or deeply nested markdown. Claude Code only renders a session's
 system prompt from its first message onward, so a session `/importar` picked
 up already had this decided before the bot ever touched it.
 
-### A /wpp request is a conversation
+### Talking to it instead of commanding it
 
-After a `/wpp`, what you type next goes back to that same agent for 30
-minutes — the answer to a question it asked, the recipient it was missing, a
-correction. It does **not** go to whatever project session is active, which is
-how a coding session once ended up messaging someone's father. `@name`, `/use`,
-`/new`, `/cd`, and deciding the draft (`/ok`, `/bot`, `/no`, `/edit`) all end
-the exchange, and after 30 minutes plain text is a coding request again.
+Everything you send that is not a `/command` and not `@session` goes to one
+long conversation with the assistant — the same session `/wpp` uses, which
+remembers what you said before. It decides what you meant and acts:
 
-Your words reach the agent verbatim. When a plain-words message is read as
+> **você:** o juliano respondeu?
+> **assistente:** Ainda não. A última foi minha, 14h20, cobrando o deploy.
+> **você:** cutuca de leve
+> **assistente:** Mandei: "Juliano, tudo certo com o deploy?"
+
+It answers as itself, with no `[session]` label in front — a project session
+keeps its name, because several of them answer out of order. It can write and
+send a message (as you or as the bot), take one back, read your log, schedule,
+and hand work that is not about messages to a project session, which then
+answers you directly, labelled. Commands still work, as shortcuts.
+
+Without the personal account paired there is no assistant, and plain text
+keeps going to the active session, as before.
+
+Your words reach it verbatim. When a plain-words message is read as
 `/wpp` (below), the request that gets dispatched is **your** text, not the
 classifier's summary of it: a paraphrase drops what mattered — who signs it,
 who did the thing — and sends a message you did not ask for.
 
 The request also carries the list of people the bot itself has already written
 to, and when, so the agent reads that conversation before writing the formal
-wording instead of greeting someone it spoke to an hour ago. And the `wpp`
-session is recreated whenever `agent/CLAUDE.md` changes, since a running
-session keeps the instructions it started with.
+wording instead of greeting someone it spoke to an hour ago. And the session is
+recreated whenever `agent/CLAUDE.md` changes, since a running session keeps the
+instructions it started with.
 
-### Commands in plain words
+**It sends without asking you first.** Told to send something, it writes it and
+sends it, then shows you exactly what went out — that is what "no commands"
+costs. `undo` takes back the last one. It proposes instead of sending when it
+is not sure: an ambiguous recipient, or content it could not confirm.
+
+### Commands in plain words (without the assistant)
+
+With the personal account paired, the assistant above reads everything and
+this layer is off: two things reading the same sentence would race to act on
+it. What follows is what happens **without** a personal account, when there is
+no assistant to talk to.
 
 Typed or dictated, a short message that means a command runs as that command:
 "manda o 31 pelo bot" is `/bot 31`, "descarta esse" quoting a draft is `/no`
