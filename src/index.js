@@ -6,6 +6,7 @@ import { createHandler } from './handler.js'
 import { createWhatsapp, aceitaDoBot } from './whatsapp.js'
 import { createApi } from './api.js'
 import { runClaude, attachClaude, listAgents } from './claude.js'
+import { classificadorOpenAI } from './intent.js'
 import { transcribe } from './transcribe.js'
 import { formatDraft } from './wpp.js'
 import { contaPessoalPareada, montarContaPessoal } from './boot.js'
@@ -129,6 +130,10 @@ async function main() {
   }
 
   handler = createHandler({
+    classify: config.openaiApiKey
+      ? classificadorOpenAI({ apiKey: config.openaiApiKey, model: config.intentModel, timeoutMs: config.intentTimeoutMs })
+      : null,
+    log,
     sessions,
     run,
     attach: attachClaude,

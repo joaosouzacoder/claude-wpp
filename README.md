@@ -47,7 +47,7 @@ systemctl --user start claude-wpp
 | `/schedulers` | what is waiting for your approval and what is scheduled |
 | `/undo` | deletes the last message sent on your behalf |
 | `@name text` | sends to another session without switching the active one |
-| bare text | goes to the active session |
+| bare text | read as a command when it means one (see below), otherwise goes to the active session |
 | voice note or audio | transcribed, then treated as if you had typed it |
 | image | forwarded to Claude; the caption is the prompt |
 
@@ -57,6 +57,24 @@ WhatsApp, not a terminal — so it favors short paragraphs and plain text over
 big tables or deeply nested markdown. Claude Code only renders a session's
 system prompt from its first message onward, so a session `/importar` picked
 up already had this decided before the bot ever touched it.
+
+### Commands in plain words
+
+Typed or dictated, a short message that means a command runs as that command:
+"manda o 31 pelo bot" is `/bot 31`, "descarta esse" quoting a draft is `/no`
+on that draft, "avisa a Ana que a reunião mudou" is `/wpp avisa a Ana…`,
+"o que tem pendente?" is `/schedulers`. The bot answers `🗣️ Entendi: /bot 31`
+before running it, so you always see what it understood.
+
+An OpenAI model (`intentModel`, using the same `openaiApiKey` as audio) does
+the reading; it is given the command list, the pending drafts and the message
+you quoted. What it answers is only accepted if it is a known command, and
+`/ok`, `/bot`, `/no` and `/edit` only run on a draft you pointed at — by
+number, by quoting it, or by it being the only one pending — so "joga fora o
+rascunho" with two pending does nothing. Anything else (a coding request, a
+question, a doubt, text over 400 characters, a timeout, no key configured)
+goes to the active session exactly as before. Images and documents always go
+to the session.
 
 ## Audio, images and files
 

@@ -625,7 +625,7 @@ test('sem chave da OpenAI o áudio avisa que falta a chave e o texto segue funci
 
 // --- conta pessoal (/wpp) ---
 
-function montarComWpp({ run, undo, formalizar = async ({ texto }) => `Prezada, ${texto}.` } = {}) {
+function montarComWpp({ run, undo, classify, formalizar = async ({ texto }) => `Prezada, ${texto}.` } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'handler-wpp-'))
   const db = openDb(':memory:')
   const outbox = createOutbox({ db, now: () => 1000 })
@@ -633,6 +633,7 @@ function montarComWpp({ run, undo, formalizar = async ({ texto }) => `Prezada, $
   const passadas = []
 
   const handler = createHandler({
+    classify,
     sessions: createSessions({ store: createStore(join(dir, 'state.json')), defaultCwd: dir }),
     run: run ?? (async () => ({ ok: true, text: 'rascunho pronto', sessionId: 'sid', error: null })),
     transcribe: async () => ({ ok: true, text: '', error: null }),
@@ -1311,4 +1312,53 @@ test('citar uma mensagem qualquer segue o caminho normal da sessão', async () =
   await handler.handle({ text: 'e isso?', media: null, raw: citando('OUTRA-MSG') })
   assert.equal(rodou, true)
   assert.equal(enviados.length, 0)
+})
+
+test('plain words that mean a command run as that command', async () => {
+  const prompts = []
+  const { handler, outbox, ditos, rascunho, passadas } = montarComWpp({
+    classify: async (p) => { prompts.push(p); return '/bot 1' },
+    run: async () => { throw new Error('não devia ir para a sessão') },
+  })
+  const d = rascunho()
+  await handler.handle({ text: 'pode mandar esse pelo bot', raw: { message: { extendedTextMessage: { text: 'x', contextInfo: { quotedMessage: { conversation: `Rascunho #${d.id}` } } } } } })
+
+  assert.match(prompts[0], /#1 para Jane/)
+  assert.match(prompts[0], /citando esta mensagem do bot:\n"Rascunho #1"/)
+  assert.equal(ditos[0], '🗣️ Entendi: /bot 1')
+  assert.equal(outbox.get(d.id).status, 'approved')
+  assert.equal(outbox.get(d.id).sender, 'bot')
+  assert.equal(passadas.length, 1)
+})
+
+test('text that is not a command still goes to the session', async () => {
+  const pedidos = []
+  const { handler, outbox, rascunho } = montarComWpp({
+    classify: async () => 'NENHUM',
+    run: async ({ prompt }) => { pedidos.push(prompt); return { ok: true, text: 'feito', sessionId: 's', error: null } },
+  })
+  const d = rascunho()
+  await handler.handle('refatora o parser')
+  assert.deepEqual(pedidos, ['refatora o parser'])
+  assert.equal(outbox.get(d.id).status, 'pending')
+})
+
+test('a failing classifier falls back to the session', async () => {
+  const pedidos = []
+  const { handler } = montarComWpp({
+    classify: async () => { throw new Error('claude fora') },
+    run: async ({ prompt }) => { pedidos.push(prompt); return { ok: true, text: 'feito', sessionId: 's', error: null } },
+  })
+  await handler.handle('aprova tudo')
+  assert.deepEqual(pedidos, ['aprova tudo'])
+})
+
+test('slash commands and @session skip the classifier', async () => {
+  let chamadas = 0
+  const { handler, rascunho } = montarComWpp({ classify: async () => { chamadas++; return '/no 1' } })
+  rascunho()
+  await handler.handle('/schedulers')
+  await handler.handle('/new ~ s9')
+  await handler.handle('@s9 oi')
+  assert.equal(chamadas, 0)
 })

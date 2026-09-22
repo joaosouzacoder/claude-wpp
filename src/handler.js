@@ -6,6 +6,7 @@ import { chunkText } from './text.js'
 import { promptComImagem, promptComArquivo, extrairArquivos } from './media.js'
 import { mimetypeDe } from './mimetypes.js'
 import { formatDraft, formatQueue } from './wpp.js'
+import { createIntent, textoCitado } from './intent.js'
 
 const SESSAO_WPP = 'wpp'
 
@@ -52,6 +53,7 @@ const AJUDA = [
   '/r <n> <texto> — o mesmo, pelo número da resposta',
   '',
   'Áudio vira texto e segue como se você tivesse digitado (comandos inclusive).',
+  'Pode falar normal: "manda o 3 pelo bot", "descarta esse", "avisa a Ana que…" viram o comando.',
   'Imagem vai junto do pedido; a legenda é o prompt.',
 ].join('\n')
 
@@ -84,7 +86,7 @@ function ociosidade(iso) {
   return `${Math.floor(min / 60)}h`
 }
 
-export function createHandler({ sessions, run, attach = null, transcribe, reply, replyFile = null, config, wpp = null, listAgents = null, relay = null }) {
+export function createHandler({ sessions, run, attach = null, transcribe, reply, replyFile = null, config, wpp = null, listAgents = null, relay = null, classify = null, log = null }) {
   // What /manuais last showed, so /importar <n> knows which session that
   // number meant. Only ever read right after a fresh /manuais.
   let sessoesManuais = []
@@ -569,6 +571,14 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
     return reply(`↪️ Mandei pelo bot para ${r.to}:\n\n${r.text}`)
   }
 
+  const interpretar = classify && createIntent({ classify, ajuda: AJUDA, conhecidos: new Set(Object.keys(comandos)), log })
+
+  function rodarComando(cmd) {
+    const executor = comandos[cmd.name]
+    if (!executor) return reply(`Não conheço /${cmd.name}. Manda /help.`)
+    return executor(cmd.args, cmd.rest ?? '')
+  }
+
   async function handle(entrada) {
     const { text, media, raw } = typeof entrada === 'string' ? { text: entrada, media: null, raw: null } : (entrada ?? {})
 
@@ -592,10 +602,20 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
 
     if (cmd.type === 'error') return reply(cmd.message)
 
-    if (cmd.type === 'command') {
-      const executor = comandos[cmd.name]
-      if (!executor) return reply(`Não conheço /${cmd.name}. Manda /help.`)
-      return executor(cmd.args, cmd.rest ?? '')
+    if (cmd.type === 'command') return rodarComando(cmd)
+
+    // Plain words that mean a bot command run as that command; everything
+    // else (and any doubt) still goes to the session.
+    if (interpretar && !cmd.target && (!media || media.kind === 'audio')) {
+      const linha = await interpretar({
+        texto: cmd.text,
+        citada: textoCitado(raw),
+        pendentes: wpp ? wpp.outbox.pending() : [],
+      })
+      if (linha) {
+        await reply(`🗣️ Entendi: ${linha}`)
+        return rodarComando(parse(linha))
+      }
     }
 
     let sessao

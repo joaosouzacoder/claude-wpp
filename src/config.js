@@ -30,6 +30,10 @@ const DEFAULTS = {
   openaiApiKey: null,
   transcribeModel: 'gpt-4o-transcribe',
   transcribeTimeoutMs: 120000,
+  // Reads plain words as a bot command ("manda o 3 pelo bot"). Past the
+  // timeout the text simply goes on to the session.
+  intentModel: 'gpt-4.1',
+  intentTimeoutMs: 8000,
   personalNumber: null,
   timezone: 'America/Sao_Paulo',
   schedulerIntervalMs: 30000,
