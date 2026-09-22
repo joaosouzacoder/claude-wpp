@@ -58,6 +58,26 @@ big tables or deeply nested markdown. Claude Code only renders a session's
 system prompt from its first message onward, so a session `/importar` picked
 up already had this decided before the bot ever touched it.
 
+### A /wpp request is a conversation
+
+After a `/wpp`, what you type next goes back to that same agent for 30
+minutes — the answer to a question it asked, the recipient it was missing, a
+correction. It does **not** go to whatever project session is active, which is
+how a coding session once ended up messaging someone's father. `@name`, `/use`,
+`/new`, `/cd`, and deciding the draft (`/ok`, `/bot`, `/no`, `/edit`) all end
+the exchange, and after 30 minutes plain text is a coding request again.
+
+Your words reach the agent verbatim. When a plain-words message is read as
+`/wpp` (below), the request that gets dispatched is **your** text, not the
+classifier's summary of it: a paraphrase drops what mattered — who signs it,
+who did the thing — and sends a message you did not ask for.
+
+The request also carries the list of people the bot itself has already written
+to, and when, so the agent reads that conversation before writing the formal
+wording instead of greeting someone it spoke to an hour ago. And the `wpp`
+session is recreated whenever `agent/CLAUDE.md` changes, since a running
+session keeps the instructions it started with.
+
 ### Commands in plain words
 
 Typed or dictated, a short message that means a command runs as that command:

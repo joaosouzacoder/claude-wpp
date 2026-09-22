@@ -83,8 +83,18 @@ export function createIntent({ classify, ajuda, conhecidos, log }) {
       log?.warn?.(`[intent] classificação falhou, segue para a sessão: ${err.message}`)
       return null
     }
-    return linha && rascunhoNomeado(linha, { texto, citada, pendentes }) ? linha : null
+    if (!linha) return null
+    if (!rascunhoNomeado(linha, { texto, citada, pendentes })) return null
+    return comTextoOriginal(linha, texto)
   }
+}
+
+// `/wpp` carries a request someone will act on, so it goes through in his own
+// words. Left to the model, a paraphrase quietly drops what mattered — who
+// signs it, who did the thing — and the message that goes out is not the one
+// he asked for. Recognising the intent is the model's job; the wording is not.
+export function comTextoOriginal(linha, texto) {
+  return /^\/wpp(\s|$)/i.test(linha) ? `/wpp ${texto.trim()}` : linha
 }
 
 const SOBRE_RASCUNHO = new Set(['ok', 'bot', 'no', 'edit'])

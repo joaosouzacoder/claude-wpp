@@ -1,5 +1,5 @@
 import { rmSync, statSync, readFileSync } from 'node:fs'
-import { basename } from 'node:path'
+import { basename, join } from 'node:path'
 import { parse } from './router.js'
 import { emAndamento } from './claude.js'
 import { chunkText } from './text.js'
@@ -9,6 +9,12 @@ import { formatDraft, formatQueue } from './wpp.js'
 import { createIntent, textoCitado } from './intent.js'
 
 const SESSAO_WPP = 'wpp'
+
+// How long a /wpp exchange stays open for a bare follow-up. Long enough to
+// answer a question the agent asked; short enough that tomorrow's "arruma o
+// build" is a coding request again, not the tail of yesterday's message.
+const CONVERSA_WPP_MS = 30 * 60 * 1000
+const FECHA_CONVERSA_WPP = new Set(['ok', 'bot', 'no', 'edit', 'use', 'new', 'cd', 'end', 'stop', 'importar'])
 
 // Enough of a long reply's opening to tell what it says without opening the
 // attachment, and well under what WhatsApp shows of a caption.
@@ -41,6 +47,7 @@ const AJUDA = [
   '',
   'Sua conta pessoal:',
   '/wpp <pedido> — lê suas conversas e prepara uma mensagem',
+  '  (o que você escrever depois continua com ele por 30min; /ok, /bot, /no ou @sessão encerram)',
   '/ok <n> — aprova o rascunho n e manda como você (só assim ele sai)',
   '/bot <n> — aprova o rascunho n e manda pelo número do bot',
   '/edit <n> <texto> — reescreve o rascunho n (volta a precisar de /ok)',
@@ -90,6 +97,41 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
   // What /manuais last showed, so /importar <n> knows which session that
   // number meant. Only ever read right after a fresh /manuais.
   let sessoesManuais = []
+
+  // When the last /wpp turn happened. While a request about his own WhatsApp
+  // is in the air, what he types next is the rest of that conversation — an
+  // answer to a question the agent asked, a correction, the recipient it was
+  // missing. Sending that to whatever project session happens to be active is
+  // how a coding session once ended up messaging his father.
+  let conversaWpp = 0
+
+  // A session keeps the instructions it read when it started. Editing
+  // agent/CLAUDE.md would otherwise only take effect whenever someone
+  // remembered to /end the wpp session — so a fix to how the agent writes
+  // could sit unused for days while it kept doing the old thing.
+  function instrucoesMudaram(sessao) {
+    try {
+      return statSync(join(wpp.agentCwd, 'CLAUDE.md')).mtimeMs > new Date(sessao.createdAt).getTime()
+    } catch {
+      return false
+    }
+  }
+
+  // The agent cannot know what the bot itself has already said to someone —
+  // that lives outside the log it reads. Without this it greets and
+  // introduces itself to a person the bot spoke to an hour ago.
+  function comContexto(pedido) {
+    const contatos = wpp.botContatos?.() ?? []
+    if (!contatos.length) return pedido
+    const lista = contatos.map((c) => `${c.name ?? c.number} (${c.number}), última vez ${ociosidade(new Date(c.last_sent_at * 1000).toISOString())} atrás`).join('\n')
+    return [
+      pedido,
+      '',
+      '[o bot (você, falando em nome do João pelo número do bot) já conversou com estas pessoas:',
+      lista,
+      'antes de escrever --body-bot para alguém desta lista, leia a conversa em bot_messages e continue de onde parou, sem cumprimentar nem se apresentar de novo]',
+    ].join('\n')
+  }
 
   // Files Claude marked for delivery go out after its text, each as an
   // attachment. Always to the owner: `reply`/`replyFile` only ever reach
@@ -447,7 +489,7 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
       // else entirely. Pointing anywhere but agentCwd means Claude never reads
       // the instructions that give it its tools and its one rule.
       let sessao = sessions.get(SESSAO_WPP)
-      if (sessao && sessao.cwd !== wpp.agentCwd) {
+      if (sessao && (sessao.cwd !== wpp.agentCwd || instrucoesMudaram(sessao))) {
         sessions.end(SESSAO_WPP)
         sessao = null
       }
@@ -456,7 +498,8 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
       } catch (err) {
         return reply(`Não deu: ${err.message}`)
       }
-      return despachar(sessao, pedido)
+      conversaWpp = Date.now()
+      return despachar(sessao, comContexto(pedido))
     },
 
     async ok(args) {
@@ -544,6 +587,12 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
     return wpp.tick()
   }
 
+  // Only while the exchange is fresh, and only for plain text: a command, a
+  // named session, approving or discarding a draft all close it.
+  function conversaAbertaComWpp() {
+    return Boolean(conversaWpp) && Date.now() - conversaWpp < CONVERSA_WPP_MS && Boolean(sessions.get(SESSAO_WPP))
+  }
+
   function semConta() {
     if (wpp) return true
     reply('Conta pessoal não configurada. Veja o README para parear com `npm run pair:me`.').catch(() => {})
@@ -576,6 +625,9 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
   function rodarComando(cmd) {
     const executor = comandos[cmd.name]
     if (!executor) return reply(`Não conheço /${cmd.name}. Manda /help.`)
+    // Deciding a draft, or naming a session, ends the /wpp exchange: whatever
+    // he types next is a fresh start, not the tail of that one.
+    if (FECHA_CONVERSA_WPP.has(cmd.name)) conversaWpp = 0
     return executor(cmd.args, cmd.rest ?? '')
   }
 
@@ -622,6 +674,10 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
     if (cmd.target) {
       sessao = sessions.get(cmd.target)
       if (!sessao) return reply(`Não achei a sessão ${cmd.target}. Manda /ls.`)
+      conversaWpp = 0
+    } else if (conversaAbertaComWpp()) {
+      sessao = sessions.get(SESSAO_WPP)
+      conversaWpp = Date.now()
     } else {
       try {
         sessao = sessions.active() ?? await sessions.create({ cwd: config.defaultCwd })
