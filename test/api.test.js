@@ -536,16 +536,22 @@ async function subirParaCompor({ now } = {}) {
   const pedidos = []
   const diretos = []
   const rascunhos = []
+  const despachos = []
   const servidor = createApi({
     host: '127.0.0.1', port: 0, token: 'segredo', whatsapp, outbox: outboxReal, mediaDir,
     onWpp: (p) => { pedidos.push(p) },
     onDirect: async (job) => { diretos.push(job) },
+    onUndo: async () => ({ ok: true, job: { chat_name: 'Jane', body: 'traz o macbook' } }),
+    onDispatch: ({ session, prompt }) => (session === 'wpp'
+      ? { ok: false, error: 'essa é a sua própria sessão' }
+      : (despachos.push({ session, prompt }), { ok: true, session: session ?? 'ativa' })),
+    sessionList: () => [{ name: 'infra', cwd: '/tmp/infra', busy: false }],
     onDraft: async (job) => { rascunhos.push(job) },
     ...(now ? { now } : {}),
   })
   const url = `http://127.0.0.1:${await servidor.listen()}`
   const post = (rota, corpo) => fetch(`${url}${rota}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer segredo' }, body: JSON.stringify(corpo) })
-  return { servidor, post, outboxReal, pedidos, diretos, rascunhos, dir, mediaDir }
+  return { servidor, post, outboxReal, pedidos, diretos, rascunhos, despachos, dir, mediaDir, url }
 }
 
 test('outbox guarda as duas versões do texto', async () => {
@@ -650,5 +656,65 @@ test('envio direto pelo bot exige a versão formal; send inválido é 400', asyn
   assert.equal((await post('/outbox', { ...direto, sendAs: 'todos' })).status, 400)
   assert.equal((await post('/wpp', { request: 'x', send: 'eu' })).status, 400)
   assert.equal(pedidos.length, 1)
+  await servidor.close()
+})
+
+test('approve manda o rascunho na hora, como ele ou pelo bot', async () => {
+  const { servidor, post, outboxReal, diretos } = await subirParaCompor()
+  const criado = await (await post('/outbox', direto)).json()
+
+  const r = await (await post('/approve', { id: criado.id, sender: 'bot' })).json()
+  assert.equal(r.sent, 'bot')
+  assert.equal(outboxReal.get(criado.id).status, 'approved')
+  assert.equal(outboxReal.get(criado.id).sender, 'bot')
+  assert.equal(diretos.length, 1)
+  await servidor.close()
+})
+
+test('approve recusa rascunho inexistente, já decidido, sender inválido e bot sem versão formal', async () => {
+  const { servidor, post, outboxReal } = await subirParaCompor()
+  assert.equal((await post('/approve', { id: 999, sender: 'me' })).status, 404)
+  assert.equal((await post('/approve', { sender: 'me' })).status, 400)
+
+  const semFormal = await (await post('/outbox', { chatJid: direto.chatJid, body: 'oi' })).json()
+  assert.equal((await post('/approve', { id: semFormal.id, sender: 'bot' })).status, 400)
+  assert.equal(outboxReal.get(semFormal.id).status, 'pending')
+
+  assert.equal((await post('/approve', { id: semFormal.id, sender: 'todos' })).status, 400)
+  assert.equal((await post('/approve', { id: semFormal.id, sender: 'me' })).status, 200)
+  assert.equal((await post('/approve', { id: semFormal.id, sender: 'me' })).status, 404, 'não aprova duas vezes')
+  await servidor.close()
+})
+
+test('undo conta o que apagou', async () => {
+  const { servidor, post } = await subirParaCompor()
+  const r = await (await post('/undo', {})).json()
+  assert.equal(r.to, 'Jane')
+  assert.equal(r.body, 'traz o macbook')
+  await servidor.close()
+})
+
+test('dispatch entrega o pedido à sessão, e recusa a si mesma ou sem prompt', async () => {
+  const { servidor, post, despachos } = await subirParaCompor()
+  const r = await (await post('/dispatch', { session: 'infra', prompt: 'roda os testes' })).json()
+  assert.equal(r.session, 'infra')
+  assert.deepEqual(despachos, [{ session: 'infra', prompt: 'roda os testes' }])
+
+  assert.equal((await post('/dispatch', { session: 'wpp', prompt: 'x' })).status, 400)
+  assert.equal((await post('/dispatch', { prompt: '  ' })).status, 400)
+  assert.equal(despachos.length, 1)
+  await servidor.close()
+})
+
+test('sessions lista o que existe, e as rotas novas exigem token', async () => {
+  const { servidor, url } = await subirParaCompor()
+  const com = await fetch(`${url}/sessions`, { headers: { authorization: 'Bearer segredo' } })
+  assert.deepEqual((await com.json()).sessions, [{ name: 'infra', cwd: '/tmp/infra', busy: false }])
+
+  for (const rota of ['/approve', '/undo', '/dispatch']) {
+    const sem = await fetch(`${url}${rota}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+    assert.equal(sem.status, 401, rota)
+  }
+  assert.equal((await fetch(`${url}/sessions`)).status, 401)
   await servidor.close()
 })

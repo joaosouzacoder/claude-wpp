@@ -10,11 +10,10 @@ import { createIntent, textoCitado } from './intent.js'
 
 const SESSAO_WPP = 'wpp'
 
-// How long a /wpp exchange stays open for a bare follow-up. Long enough to
-// answer a question the agent asked; short enough that tomorrow's "arruma o
-// build" is a coding request again, not the tail of yesterday's message.
-const CONVERSA_WPP_MS = 30 * 60 * 1000
-const FECHA_CONVERSA_WPP = new Set(['ok', 'bot', 'no', 'edit', 'use', 'new', 'cd', 'end', 'stop', 'importar'])
+// The butler speaks as himself: his replies carry no session label, because
+// to the owner this is not "a session answered", it is the assistant talking.
+// A project session keeps its name, since several of them answer out of order.
+const etiqueta = (nome) => (nome === SESSAO_WPP ? '' : `[${nome}] `)
 
 // Enough of a long reply's opening to tell what it says without opening the
 // attachment, and well under what WhatsApp shows of a caption.
@@ -31,6 +30,8 @@ const FORMATO_WHATSAPP = 'Your reply will be read on WhatsApp, not a terminal or
 const LIMITE_ARQUIVO_SAIDA = 64 * 1024 * 1024
 
 const AJUDA = [
+  'Fala comigo normal — eu entendo e faço. Os comandos abaixo são atalho, não obrigação.',
+  '',
   'Comandos:',
   '/new [dir] [nome] — cria sessão e ativa',
   '/ls — lista as sessões',
@@ -46,8 +47,7 @@ const AJUDA = [
   '@nome texto — manda pra outra sessão sem trocar a ativa',
   '',
   'Sua conta pessoal:',
-  '/wpp <pedido> — lê suas conversas e prepara uma mensagem',
-  '  (o que você escrever depois continua com ele por 30min; /ok, /bot, /no ou @sessão encerram)',
+  '/wpp <pedido> — o mesmo que falar comigo direto (é para onde vai tudo sem barra)',
   '/ok <n> — aprova o rascunho n e manda como você (só assim ele sai)',
   '/bot <n> — aprova o rascunho n e manda pelo número do bot',
   '/edit <n> <texto> — reescreve o rascunho n (volta a precisar de /ok)',
@@ -98,13 +98,6 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
   // number meant. Only ever read right after a fresh /manuais.
   let sessoesManuais = []
 
-  // When the last /wpp turn happened. While a request about his own WhatsApp
-  // is in the air, what he types next is the rest of that conversation — an
-  // answer to a question the agent asked, a correction, the recipient it was
-  // missing. Sending that to whatever project session happens to be active is
-  // how a coding session once ended up messaging his father.
-  let conversaWpp = 0
-
   // A session keeps the instructions it read when it started. Editing
   // agent/CLAUDE.md would otherwise only take effect whenever someone
   // remembered to /end the wpp session — so a fix to how the agent writes
@@ -148,17 +141,17 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
     try {
       info = statSync(caminho)
     } catch {
-      return reply(`[${nome}] (não achei o arquivo ${caminho} para anexar)`)
+      return reply(`${etiqueta(nome)}(não achei o arquivo ${caminho} para anexar)`)
     }
-    if (!info.isFile()) return reply(`[${nome}] (${caminho} não é um arquivo — não anexei)`)
+    if (!info.isFile()) return reply(`${etiqueta(nome)}(${caminho} não é um arquivo — não anexei)`)
     if (info.size > LIMITE_ARQUIVO_SAIDA) {
-      return reply(`[${nome}] (${nomeArquivo} tem ${Math.round(info.size / 1024 / 1024)} MB — grande demais para anexar; está em ${caminho})`)
+      return reply(`${etiqueta(nome)}(${nomeArquivo} tem ${Math.round(info.size / 1024 / 1024)} MB — grande demais para anexar; está em ${caminho})`)
     }
-    if (!replyFile) return reply(`[${nome}] (arquivo em ${caminho})`)
+    if (!replyFile) return reply(`${etiqueta(nome)}(arquivo em ${caminho})`)
     try {
-      await replyFile({ content: readFileSync(caminho), fileName: nomeArquivo, caption: `[${nome}] ${nomeArquivo}`, mimetype: mimetypeDe(nomeArquivo) })
+      await replyFile({ content: readFileSync(caminho), fileName: nomeArquivo, caption: `${etiqueta(nome)}${nomeArquivo}`, mimetype: mimetypeDe(nomeArquivo) })
     } catch (err) {
-      await reply(`[${nome}] (não consegui anexar ${nomeArquivo}: ${err.message}; está em ${caminho})`)
+      await reply(`${etiqueta(nome)}(não consegui anexar ${nomeArquivo}: ${err.message}; está em ${caminho})`)
     }
   }
 
@@ -173,13 +166,13 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
         await replyFile({
           content: texto,
           fileName: `${nome}.txt`,
-          caption: `[${nome}] ${previa}\n\n… resposta completa (${texto.length} caracteres) no anexo.`,
+          caption: `${etiqueta(nome)}${previa}\n\n… resposta completa (${texto.length} caracteres) no anexo.`,
         })
         return
       } catch {}
     }
     for (const pedaco of chunkText(texto, config.maxMessageChars)) {
-      await reply(`[${nome}] ${pedaco}`)
+      await reply(`${etiqueta(nome)}${pedaco}`)
     }
   }
 
@@ -223,7 +216,7 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
           avisou = true
           reply(texto).catch(() => {})
         },
-        onNotice: (texto) => { reply(`[${sessao.name}] ${texto}`).catch(() => {}) },
+        onNotice: (texto) => { reply(`${etiqueta(sessao.name)}${texto}`).catch(() => {}) },
         onDispatch: (disparo) => sessions.markDispatched(sessao.name, disparo),
       }).catch((err) => ({ ok: false, text: '', sessionId: null, error: err.message ?? String(err) }))
 
@@ -485,20 +478,12 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
       const pedido = rest.trim()
       if (!pedido) return reply('Uso: /wpp <o que você quer que eu faça na sua conta>')
 
-      // A session with this name may predate the command, or point somewhere
-      // else entirely. Pointing anywhere but agentCwd means Claude never reads
-      // the instructions that give it its tools and its one rule.
-      let sessao = sessions.get(SESSAO_WPP)
-      if (sessao && (sessao.cwd !== wpp.agentCwd || instrucoesMudaram(sessao))) {
-        sessions.end(SESSAO_WPP)
-        sessao = null
-      }
+      let sessao
       try {
-        sessao ??= await sessions.create({ cwd: wpp.agentCwd, name: SESSAO_WPP, activate: false })
+        sessao = await sessaoDoMordomo()
       } catch (err) {
         return reply(`Não deu: ${err.message}`)
       }
-      conversaWpp = Date.now()
       return despachar(sessao, comContexto(pedido))
     },
 
@@ -587,10 +572,40 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
     return wpp.tick()
   }
 
-  // Only while the exchange is fresh, and only for plain text: a command, a
-  // named session, approving or discarding a draft all close it.
-  function conversaAbertaComWpp() {
-    return Boolean(conversaWpp) && Date.now() - conversaWpp < CONVERSA_WPP_MS && Boolean(sessions.get(SESSAO_WPP))
+  // The butler: one long conversation that holds everything he says which is
+  // not a command. A session with this name may predate it, or point somewhere
+  // else entirely — anywhere but agentCwd and Claude never reads the
+  // instructions that give it its tools and its rules.
+  async function sessaoDoMordomo() {
+    let sessao = sessions.get(SESSAO_WPP)
+    if (sessao && (sessao.cwd !== wpp.agentCwd || instrucoesMudaram(sessao))) {
+      sessions.end(SESSAO_WPP)
+      sessao = null
+    }
+    return sessao ?? await sessions.create({ cwd: wpp.agentCwd, name: SESSAO_WPP, activate: false })
+  }
+
+  // The butler handing work to a project session, through the API. Same path
+  // as a typed `@sessão`, so the reply reaches him labelled with that name.
+  function despacharDeFora({ session, prompt, cwd }) {
+    let sessao = session ? sessions.get(session) : sessions.active()
+    if (session && !sessao) {
+      if (!cwd) return { ok: false, error: `não existe sessão "${session}"; passe cwd para eu criar` }
+      sessao = null
+    }
+    if (sessao?.name === SESSAO_WPP) return { ok: false, error: 'essa é a sua própria sessão; despache para uma sessão de projeto' }
+
+    const abrir = sessao
+      ? Promise.resolve(sessao)
+      : sessions.create({ cwd: cwd ?? config.defaultCwd, name: session ?? undefined })
+
+    abrir
+      .then((alvo) => despachar(alvo, prompt))
+      .catch((e) => {
+        log?.error?.(e.stack ?? e.message)
+        reply(`Não consegui despachar para ${session ?? 'a sessão ativa'}: ${e.message}`).catch(() => {})
+      })
+    return { ok: true, session: sessao?.name ?? session ?? 'nova' }
   }
 
   function semConta() {
@@ -625,9 +640,6 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
   function rodarComando(cmd) {
     const executor = comandos[cmd.name]
     if (!executor) return reply(`Não conheço /${cmd.name}. Manda /help.`)
-    // Deciding a draft, or naming a session, ends the /wpp exchange: whatever
-    // he types next is a fresh start, not the tail of that one.
-    if (FECHA_CONVERSA_WPP.has(cmd.name)) conversaWpp = 0
     return executor(cmd.args, cmd.rest ?? '')
   }
 
@@ -656,9 +668,13 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
 
     if (cmd.type === 'command') return rodarComando(cmd)
 
-    // Plain words that mean a bot command run as that command; everything
-    // else (and any doubt) still goes to the session.
-    if (interpretar && !cmd.target && (!media || media.kind === 'audio')) {
+    // Plain words that mean a bot command run as that command — but only
+    // where there is no butler. With one, two things would be reading the
+    // same sentence and racing to act on it; the butler has every command as
+    // a tool and the conversation to know what was meant, so it decides
+    // alone, and he stops seeing "🗣️ Entendi: /comando" in front of his own
+    // words.
+    if (interpretar && !wpp && !cmd.target && (!media || media.kind === 'audio')) {
       const linha = await interpretar({
         texto: cmd.text,
         citada: textoCitado(raw),
@@ -670,17 +686,18 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
       }
     }
 
+    // Everything he says that is not a command is said to the butler, which
+    // is the one that decides what it means — answering, writing to someone,
+    // or handing the work to a project session. `@sessão` is how he reaches a
+    // session directly, and without the personal account there is no butler,
+    // so plain text keeps going to the active session as it always did.
     let sessao
     if (cmd.target) {
       sessao = sessions.get(cmd.target)
       if (!sessao) return reply(`Não achei a sessão ${cmd.target}. Manda /ls.`)
-      conversaWpp = 0
-    } else if (conversaAbertaComWpp()) {
-      sessao = sessions.get(SESSAO_WPP)
-      conversaWpp = Date.now()
     } else {
       try {
-        sessao = sessions.active() ?? await sessions.create({ cwd: config.defaultCwd })
+        sessao = wpp ? await sessaoDoMordomo() : (sessions.active() ?? await sessions.create({ cwd: config.defaultCwd }))
       } catch (err) {
         return reply(`Não deu: ${err.message}`)
       }
@@ -694,5 +711,5 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
     return despachar(sessao, prompt)
   }
 
-  return { handle, recuperar }
+  return { handle, recuperar, despacharDeFora }
 }

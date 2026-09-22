@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, utimesSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createStore } from '../src/store.js'
@@ -29,12 +29,13 @@ async function relayComResposta() {
 
 const citando = (stanzaId) => ({ message: { extendedTextMessage: { text: 'x', contextInfo: { stanzaId } } } })
 
-function montar({ run, attach, transcribe, config, listAgents, replyFile, relay } = {}) {
+function montar({ run, attach, transcribe, config, listAgents, replyFile, relay, classify } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'handler-'))
   const sessions = createSessions({ store: createStore(join(dir, 'state.json')), defaultCwd: dir })
   const ditos = []
   const handler = createHandler({
     sessions,
+    classify,
     run: run ?? (async () => ({ ok: true, text: 'resposta', sessionId: 'sid-1', error: null })),
     attach,
     transcribe: transcribe ?? (async () => ({ ok: true, text: 'transcrição do áudio', error: null })),
@@ -657,11 +658,12 @@ function montarComWpp({ run, undo, classify, formalizar = async ({ texto }) => `
   return { handler, outbox, ditos, passadas, rascunho, pedidos, sessions, dir }
 }
 
-test('/wpp manda o pedido para a sessão dedicada, sem trocar a ativa', async () => {
+test('/wpp manda o pedido para a sessão dedicada, sem trocar a ativa e sem etiqueta', async () => {
   const { handler, ditos } = montarComWpp()
   await handler.handle('/new ~ trabalho')
   await handler.handle('/wpp olhe o grupo de líderes')
-  assert.match(ditos.at(-1), /^\[wpp\]/)
+  // The butler speaks as himself: no [wpp] in front of what he says.
+  assert.equal(ditos.at(-1), 'rascunho pronto')
   await handler.handle('/ls')
   assert.match(ditos.at(-1), /\* trabalho/)
 })
@@ -1317,92 +1319,104 @@ test('citar uma mensagem qualquer segue o caminho normal da sessão', async () =
   assert.equal(enviados.length, 0)
 })
 
-test('plain words that mean a command run as that command', async () => {
+test('sem conta pessoal, palavras viram comando e o texto solto vai para a sessão', async () => {
   const prompts = []
-  const { handler, outbox, ditos, rascunho, passadas } = montarComWpp({
-    classify: async (p) => { prompts.push(p); return '/bot 1' },
+  const { handler, ditos } = montar({
+    classify: async (p) => { prompts.push(p); return '/ls' },
     run: async () => { throw new Error('não devia ir para a sessão') },
   })
-  const d = rascunho()
-  await handler.handle({ text: 'pode mandar esse pelo bot', raw: { message: { extendedTextMessage: { text: 'x', contextInfo: { quotedMessage: { conversation: `Rascunho #${d.id}` } } } } } })
+  await handler.handle('quais sessões estão abertas?')
+  assert.match(prompts[0], /quais sessões estão abertas\?/)
+  assert.equal(ditos[0], '🗣️ Entendi: /ls')
+  assert.match(ditos[1], /Nenhuma sessão aberta/)
 
-  assert.match(prompts[0], /#1 para Jane/)
-  assert.match(prompts[0], /citando esta mensagem do bot:\n"Rascunho #1"/)
-  assert.equal(ditos[0], '🗣️ Entendi: /bot 1')
-  assert.equal(outbox.get(d.id).status, 'approved')
-  assert.equal(outbox.get(d.id).sender, 'bot')
-  assert.equal(passadas.length, 1)
-})
-
-test('text that is not a command still goes to the session', async () => {
   const pedidos = []
-  const { handler, outbox, rascunho } = montarComWpp({
+  const outro = montar({
     classify: async () => 'NENHUM',
     run: async ({ prompt }) => { pedidos.push(prompt); return { ok: true, text: 'feito', sessionId: 's', error: null } },
   })
-  const d = rascunho()
-  await handler.handle('refatora o parser')
+  await outro.handler.handle('refatora o parser')
   assert.deepEqual(pedidos, ['refatora o parser'])
-  assert.equal(outbox.get(d.id).status, 'pending')
 })
 
-test('a failing classifier falls back to the session', async () => {
+test('sem conta pessoal, classificador que falha ou comando digitado não atrapalham', async () => {
   const pedidos = []
-  const { handler } = montarComWpp({
+  const { handler } = montar({
     classify: async () => { throw new Error('claude fora') },
     run: async ({ prompt }) => { pedidos.push(prompt); return { ok: true, text: 'feito', sessionId: 's', error: null } },
   })
   await handler.handle('aprova tudo')
   assert.deepEqual(pedidos, ['aprova tudo'])
+
+  let classificou = 0
+  const outro = montar({ classify: async () => { classificou++; return '/ls' } })
+  await outro.handler.handle('/ls')
+  await outro.handler.handle('/new ~ s9')
+  await outro.handler.handle('@s9 oi')
+  assert.equal(classificou, 0)
 })
 
-test('slash commands and @session skip the classifier', async () => {
-  let chamadas = 0
-  const { handler, rascunho } = montarComWpp({ classify: async () => { chamadas++; return '/no 1' } })
-  rascunho()
-  await handler.handle('/schedulers')
-  await handler.handle('/new ~ s9')
-  await handler.handle('@s9 oi')
-  assert.equal(chamadas, 0)
+test('com o Claudinei, o classificador fica fora do caminho', async () => {
+  let classificou = 0
+  const { handler, pedidos, outbox, rascunho, ditos } = montarComWpp({
+    classify: async () => { classificou++; return '/no 1' },
+  })
+  const d = rascunho()
+  await handler.handle('descarta esse rascunho')
+
+  assert.equal(classificou, 0, 'ninguém corre com ele')
+  assert.equal(outbox.get(d.id).status, 'pending', 'quem decide é o Claudinei, não o atalho')
+  assert.equal(pedidos.at(-1).prompt.split('\n')[0], 'descarta esse rascunho')
+  assert.ok(!ditos.some((t) => t.startsWith('🗣️')), 'e ele não devolve "Entendi: /comando"')
 })
 
-test('o que ele escreve depois de um /wpp continua com o agente, não com a sessão de código', async () => {
-  const { handler, pedidos, sessions } = montarComWpp({ classify: async () => 'NENHUM' })
+test('tudo o que ele escreve sem barra vai para o Claudinei, não para a sessão de código', async () => {
+  const { handler, pedidos, sessions, ditos } = montarComWpp({ classify: async () => 'NENHUM' })
   await handler.handle('/new ~ infra')
-  await handler.handle('/wpp avisa meu pai que paguei os documentos')
+  await handler.handle('avisa meu pai que paguei os documentos')
   await handler.handle('rogerio garcia')
 
-  assert.equal(sessions.active().name, 'infra', 'a sessão ativa não muda')
+  assert.equal(sessions.active().name, 'infra', 'a sessão ativa continua sendo a de código')
   assert.equal(pedidos.length, 2)
   assert.match(pedidos[0].prompt, /avisa meu pai/)
-  assert.equal(pedidos[1].prompt, 'rogerio garcia', 'a resposta foi para o agente, literal')
+  assert.equal(pedidos[1].prompt, 'rogerio garcia', 'a resposta seguinte também é com ele')
+  assert.equal(ditos.at(-1), 'rascunho pronto', 'e ele fala sem etiqueta')
 })
 
-test('decidir o rascunho, ou chamar uma sessão pelo nome, encerra a conversa com o /wpp', async () => {
-  for (const fecha of ['/no 1', '/use infra', '/new ~ outra']) {
-    const { handler, pedidos, rascunho } = montarComWpp({ classify: async () => 'NENHUM' })
-    await handler.handle('/new ~ infra')
-    rascunho()
-    await handler.handle('/wpp avisa alguém')
-    await handler.handle(fecha)
-    await handler.handle('e aí, arruma o build')
-    assert.equal(pedidos.at(-1).prompt, 'e aí, arruma o build')
-    assert.notEqual(pedidos.at(-1).cwd, undefined)
-    assert.equal(pedidos.length, 2, fecha)
-  }
+test('decidir um rascunho não tira a conversa do Claudinei', async () => {
+  const { handler, pedidos, rascunho } = montarComWpp({ classify: async () => 'NENHUM' })
+  await handler.handle('/new ~ infra')
+  rascunho()
+  await handler.handle('/no 1')
+  await handler.handle('e aí, o que ficou pendente?')
+  assert.equal(pedidos.at(-1).prompt, 'e aí, o que ficou pendente?')
+  assert.equal(pedidos.length, 1, 'só o Claudinei recebeu')
 })
 
-test('@sessão continua alcançando outra sessão durante a conversa com o /wpp', async () => {
+test('@sessão continua sendo como ele fala direto com uma sessão de código', async () => {
   const { handler, pedidos } = montarComWpp({ classify: async () => 'NENHUM' })
   await handler.handle('/new ~ infra')
-  await handler.handle('/wpp avisa alguém')
   await handler.handle('@infra roda os testes')
   assert.equal(pedidos.at(-1).prompt, 'roda os testes')
 
-  // And after @sessão, plain text is back to the active session, not the agent.
   await handler.handle('e o lint?')
   assert.equal(pedidos.at(-1).prompt, 'e o lint?')
-  assert.equal(pedidos.length, 3)
+  assert.equal(pedidos.length, 2)
+})
+
+test('o Claudinei despacha trabalho para uma sessão de projeto, e nunca para si mesmo', async () => {
+  const { handler, pedidos, sessions } = montarComWpp({ classify: async () => 'NENHUM' })
+  await handler.handle('/new ~ infra')
+  await handler.handle('oi')  // cria a sessão do Claudinei
+
+  const r = handler.despacharDeFora({ session: 'infra', prompt: 'roda os testes' })
+  assert.deepEqual(r, { ok: true, session: 'infra' })
+  await new Promise((ok) => setTimeout(ok, 50))
+  assert.equal(pedidos.at(-1).prompt, 'roda os testes')
+
+  assert.equal(handler.despacharDeFora({ session: 'wpp', prompt: 'x' }).ok, false)
+  assert.match(handler.despacharDeFora({ session: 'não-existe', prompt: 'x' }).error, /passe cwd/)
+  void sessions
 })
 
 test('o pedido do /wpp leva quem o bot já contatou, para não cumprimentar de novo', async () => {
@@ -1419,6 +1433,9 @@ test('a sessão do wpp é refeita quando as instruções do agente mudam', async
   const antes = sessions.get('wpp').createdAt
 
   writeFileSync(join(dir, 'CLAUDE.md'), '# instruções novas')
+  // Explicit mtime: written in the same millisecond, "newer" is a coin toss.
+  const daquiAPouco = new Date(Date.now() + 5000)
+  utimesSync(join(dir, 'CLAUDE.md'), daquiAPouco, daquiAPouco)
   await handler.handle('/wpp segunda')
   assert.notEqual(sessions.get('wpp').createdAt, antes, 'devia ter recriado a sessão')
 })

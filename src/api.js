@@ -77,6 +77,9 @@ export function createApi({
   onDraft = null,
   onDirect = null,
   onWpp = null,
+  onDispatch = null,
+  onUndo = null,
+  sessionList = () => [],
   personalState = null,
   notifier = null,
   contacts = null,
@@ -276,6 +279,81 @@ export function createApi({
 
       onWpp(pedido)
       return json(res, 202, { ok: true, queued: true, ...(envio ? { send: envio } : {}) })
+    }
+
+    // The butler's own hands. It already proposes through /outbox; these are
+    // the rest of what it needs to act on what the owner tells it in words —
+    // release a draft, take one back, hand work to a project session — without
+    // him having to type the command himself.
+    if (url.pathname === '/approve') {
+      if (req.method !== 'POST') return json(res, 405, { ok: false, error: 'método não permitido' })
+      if (!autorizado()) return json(res, 401, { ok: false, error: 'não autorizado' })
+      if (!outbox) return json(res, 503, { ok: false, error: 'conta pessoal não configurada' })
+
+      let corpo
+      try {
+        corpo = JSON.parse(await lerBody(req))
+      } catch {
+        return json(res, 400, { ok: false, error: 'json inválido' })
+      }
+
+      const id = Number(corpo?.id)
+      const sender = corpo?.sender ?? 'me'
+      if (!Number.isInteger(id) || id <= 0) return json(res, 400, { ok: false, error: 'id é obrigatório' })
+      if (!REMETENTES_DIRETOS.has(sender)) return json(res, 400, { ok: false, error: 'sender tem que ser "me" ou "bot"' })
+
+      const atual = outbox.get(id)
+      if (!atual || atual.status !== 'pending') return json(res, 404, { ok: false, error: `não há rascunho pendente #${id}` })
+      if (sender === 'bot' && !String(atual.body_bot ?? '').trim()) {
+        return json(res, 400, { ok: false, error: `#${id} não tem versão formal; mande pelo /outbox com bodyBot ou aprove como "me"` })
+      }
+
+      const aprovado = outbox.approve(id, sender)
+      try {
+        await onDirect?.(aprovado)
+      } catch {
+        // Approved is approved: the scheduler sends it on its next pass.
+      }
+      return json(res, 200, { ok: true, id, status: aprovado.status, sent: sender })
+    }
+
+    if (url.pathname === '/undo') {
+      if (req.method !== 'POST') return json(res, 405, { ok: false, error: 'método não permitido' })
+      if (!autorizado()) return json(res, 401, { ok: false, error: 'não autorizado' })
+      if (!onUndo) return json(res, 503, { ok: false, error: 'conta pessoal não configurada' })
+
+      const r = await onUndo()
+      if (!r.ok) return json(res, 409, { ok: false, error: r.error })
+      return json(res, 200, { ok: true, to: r.job.chat_name ?? r.job.chat_jid, body: r.job.body })
+    }
+
+    if (url.pathname === '/sessions') {
+      if (req.method !== 'GET') return json(res, 405, { ok: false, error: 'método não permitido' })
+      if (!autorizado()) return json(res, 401, { ok: false, error: 'não autorizado' })
+      return json(res, 200, { ok: true, sessions: sessionList() })
+    }
+
+    if (url.pathname === '/dispatch') {
+      if (req.method !== 'POST') return json(res, 405, { ok: false, error: 'método não permitido' })
+      if (!autorizado()) return json(res, 401, { ok: false, error: 'não autorizado' })
+      if (!onDispatch) return json(res, 503, { ok: false, error: 'despacho não configurado' })
+
+      let corpo
+      try {
+        corpo = JSON.parse(await lerBody(req))
+      } catch {
+        return json(res, 400, { ok: false, error: 'json inválido' })
+      }
+
+      const prompt = String(corpo?.prompt ?? '').trim()
+      const sessao = String(corpo?.session ?? '').trim()
+      if (!prompt) return json(res, 400, { ok: false, error: 'prompt é obrigatório' })
+
+      const r = onDispatch({ session: sessao || null, prompt, cwd: String(corpo?.cwd ?? '').trim() || null })
+      if (!r.ok) return json(res, 400, { ok: false, error: r.error })
+      // The session answers on WhatsApp on its own clock, labelled with its
+      // name; holding this connection open for a build would only time out.
+      return json(res, 202, { ok: true, session: r.session, queued: true })
     }
 
     // Always to the owner, unlike /send: an alert has exactly one reader, and
