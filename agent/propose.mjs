@@ -9,6 +9,9 @@
 //   ... --quote <wa_id>
 //   ... --at "2026-08-28T09:00:00-03:00" [--check "ele já respondeu?"]
 //   ... --attach <path under the media dir> --attach-name "nome.pdf"
+//   ... --send-as me|bot   only when the request says direct sending is
+//                          authorized; the server checks that, and without it
+//                          the draft simply waits for approval as usual
 import { loadConfig } from '../src/config.js'
 
 const args = process.argv.slice(2)
@@ -23,6 +26,7 @@ const bodyBot = pegar('body-bot')
 const at = pegar('at')
 const check = pegar('check')
 const attach = pegar('attach')
+const sendAs = pegar('send-as')
 
 if (!to || !body) {
   console.error('uso: node propose.mjs --to <chat_jid> --body "texto" --body-bot "texto formal" [--quote <wa_id>] [--at <iso>] [--check "pergunta"] [--attach <caminho> --attach-name <nome>]')
@@ -31,6 +35,11 @@ if (!to || !body) {
 
 if (!bodyBot?.trim()) {
   console.error('falta --body-bot: a versão formal da mesma mensagem, que é a que sai se ele aprovar com /bot (pelo número do bot). Mesmo conteúdo, tom formal e cordial, sem gírias. Rode de novo com as duas versões.')
+  process.exit(1)
+}
+
+if (sendAs && !['me', 'bot'].includes(sendAs)) {
+  console.error('--send-as tem que ser "me" ou "bot"')
   process.exit(1)
 }
 
@@ -58,6 +67,7 @@ const r = await fetch(`http://${config.apiHost}:${config.apiPort}/outbox`, {
     checkPrompt: check,
     scheduledFor,
     ...(attach ? { attachment: { path: attach, name: pegar('attach-name') } } : {}),
+    ...(sendAs ? { sendAs } : {}),
   }),
   signal: AbortSignal.timeout(30000),
 })
@@ -68,4 +78,9 @@ if (!r.ok || !resposta.ok) {
   process.exit(1)
 }
 
-console.log(`rascunho #${resposta.id} criado e aguardando o /ok ou /bot do dono da conta.`)
+if (resposta.sent) {
+  console.log(`#${resposta.id} enviado direto ${resposta.sent === 'bot' ? 'pelo bot' : 'como o dono da conta'}.`)
+} else {
+  if (resposta.warning) console.log(resposta.warning)
+  console.log(`rascunho #${resposta.id} criado e aguardando o /ok ou /bot do dono da conta.`)
+}

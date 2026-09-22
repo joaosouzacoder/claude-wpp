@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { openDb } from '../src/db.js'
 import { createOutbox } from '../src/outbox.js'
-import { createWpp, parseVeredito, formatDraft, formatQueue } from '../src/wpp.js'
+import { createWpp, parseVeredito, formatDraft, formatDirect, formatQueue } from '../src/wpp.js'
 
 // --- leitura do veredito ---
 // Fecha para o lado seguro: o que não for entendido vira erro, e o scheduler
@@ -251,4 +251,17 @@ test('a conversa mostrada na verificação também vem no fuso certo', async () 
   })
   await wpp.decide(outbox.get(d.id))
   assert.match(promptVisto, /09:00/)
+})
+
+test('formatDirect diz o que saiu, por quem, e como desfazer', () => {
+  const job = { id: 9, chat_name: 'Juliano', chat_jid: 'x', sender: 'bot', body: 'fala ju', body_bot: 'Olá, Juliano.' }
+  const texto = formatDirect(job, 'America/Sao_Paulo')
+  assert.match(texto, /📤 #9 pelo bot → Juliano/)
+  assert.match(texto, /"Olá, Juliano\."/)
+  assert.match(texto, /\/undo apaga/)
+
+  const agendado = formatDirect({ ...job, sender: 'me', scheduled_for: 1756382400 }, 'America/Sao_Paulo')
+  assert.match(agendado, /como você/)
+  assert.match(agendado, /"fala ju"/)
+  assert.match(agendado, /\/no 9 cancela/)
 })

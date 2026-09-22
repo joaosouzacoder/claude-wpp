@@ -451,6 +451,17 @@ drift from what typing `/wpp` does. It answers `202` the moment the request is
 queued — the run takes as long as it takes and reports on WhatsApp, which is
 where the draft waits for your `/ok` regardless.
 
+Add `"send": "me"` or `"send": "bot"` to `POST /wpp` and the draft it produces
+may skip that wait: the session composes as usual and, if it is sure of the
+recipient and the content, proposes with `--send-as`, which approves and sends
+at once — as you, or the formal wording through the bot. WhatsApp still gets
+a `📤` note with what went out and `/undo`. The permission is held by the
+server, not by the session: one per request, for that sender only, for 30
+minutes. So a conversation the session reads cannot talk it into sending on
+its own — without a matching open grant, `sendAs` on `/outbox` lands as an
+ordinary draft (with a `warning`), and a session in any doubt proposes one
+anyway.
+
 `POST /send-file` is `/send` for a file — also as the bot, immediately. The
 file travels base64-encoded in the body, so it works from any machine that
 holds the token, not only this one. Up to roughly 16 MB; the mimetype is taken

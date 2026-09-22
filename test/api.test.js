@@ -527,17 +527,25 @@ test('nome sem conta pessoal configurada explica que precisa do número', async 
   assert.match((await r.json()).error, /conta pessoal/)
 })
 
-async function subirParaCompor() {
+async function subirParaCompor({ now } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'api-compor-'))
   const mediaDir = join(dir, 'media')
   mkdirSync(mediaDir, { recursive: true })
   const db = openDb(join(dir, 'wpp.db'))
   const outboxReal = createOutbox({ db })
   const pedidos = []
-  const servidor = createApi({ host: '127.0.0.1', port: 0, token: 'segredo', whatsapp, outbox: outboxReal, onWpp: (p) => { pedidos.push(p) }, mediaDir })
+  const diretos = []
+  const rascunhos = []
+  const servidor = createApi({
+    host: '127.0.0.1', port: 0, token: 'segredo', whatsapp, outbox: outboxReal, mediaDir,
+    onWpp: (p) => { pedidos.push(p) },
+    onDirect: async (job) => { diretos.push(job) },
+    onDraft: async (job) => { rascunhos.push(job) },
+    ...(now ? { now } : {}),
+  })
   const url = `http://127.0.0.1:${await servidor.listen()}`
   const post = (rota, corpo) => fetch(`${url}${rota}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer segredo' }, body: JSON.stringify(corpo) })
-  return { servidor, post, outboxReal, pedidos, dir, mediaDir }
+  return { servidor, post, outboxReal, pedidos, diretos, rascunhos, dir, mediaDir }
 }
 
 test('outbox guarda as duas versões do texto', async () => {
@@ -587,5 +595,60 @@ test('wpp com anexo inválido é 400 e não chega ao agente', async () => {
   assert.equal((await post('/wpp', { request: 'x', attachment: { fileName: '../a', content: 'b2k=' } })).status, 400)
   assert.equal((await post('/wpp', { request: 'x', attachment: { fileName: 'a.txt', content: 'lixo!' } })).status, 400)
   assert.equal(pedidos.length, 0)
+  await servidor.close()
+})
+
+const direto = { chatJid: '5511911111111@s.whatsapp.net', body: 'fala ju, chego 10h', bodyBot: 'Olá, Juliano. Chegarei às 10h.' }
+
+test('wpp com send libera um envio direto, uma vez, como aquele remetente', async () => {
+  const { servidor, post, outboxReal, pedidos, diretos, rascunhos } = await subirParaCompor()
+  const w = await post('/wpp', { request: 'avisa o Juliano que chego 10h', send: 'me' })
+  assert.equal(w.status, 202)
+  assert.match(pedidos[0], /--send-as me/)
+
+  const r = await post('/outbox', { ...direto, sendAs: 'me' })
+  const corpo = await r.json()
+  assert.equal(corpo.sent, 'me')
+  assert.equal(outboxReal.get(corpo.id).status, 'approved')
+  assert.equal(outboxReal.get(corpo.id).sender, 'me')
+  assert.equal(diretos.length, 1)
+
+  // The grant was used: a second direct send is just a draft.
+  const outra = await (await post('/outbox', { ...direto, sendAs: 'me' })).json()
+  assert.equal(outra.sent, undefined)
+  assert.equal(outboxReal.get(outra.id).status, 'pending')
+  assert.match(outra.warning, /não autorizado/)
+  assert.equal(rascunhos.length, 1)
+  await servidor.close()
+})
+
+test('sendAs sem pedido autorizando vira rascunho comum', async () => {
+  const { servidor, post, outboxReal, diretos } = await subirParaCompor()
+  const r = await (await post('/outbox', { ...direto, sendAs: 'bot' })).json()
+  assert.equal(outboxReal.get(r.id).status, 'pending')
+  assert.equal(diretos.length, 0)
+  await servidor.close()
+})
+
+test('a liberação é do remetente pedido e expira', async () => {
+  let agora = 1_000_000
+  const { servidor, post, outboxReal } = await subirParaCompor({ now: () => agora })
+  await post('/wpp', { request: 'x', send: 'bot' })
+  const comoEu = await (await post('/outbox', { ...direto, sendAs: 'me' })).json()
+  assert.equal(outboxReal.get(comoEu.id).status, 'pending')
+
+  agora += 31 * 60 * 1000
+  const tarde = await (await post('/outbox', { ...direto, sendAs: 'bot' })).json()
+  assert.equal(outboxReal.get(tarde.id).status, 'pending')
+  await servidor.close()
+})
+
+test('envio direto pelo bot exige a versão formal; send inválido é 400', async () => {
+  const { servidor, post, pedidos } = await subirParaCompor()
+  await post('/wpp', { request: 'x', send: 'bot' })
+  assert.equal((await post('/outbox', { chatJid: direto.chatJid, body: 'oi', sendAs: 'bot' })).status, 400)
+  assert.equal((await post('/outbox', { ...direto, sendAs: 'todos' })).status, 400)
+  assert.equal((await post('/wpp', { request: 'x', send: 'eu' })).status, 400)
+  assert.equal(pedidos.length, 1)
   await servidor.close()
 })

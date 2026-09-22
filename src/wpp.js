@@ -63,6 +63,15 @@ export function formatDraft(job, timezone) {
   return linhas.join('\n')
 }
 
+// A draft that went out without asking still gets reported: the owner learns
+// what was said in his name, and how to take it back.
+export function formatDirect(job, timezone) {
+  const linhas = [`[wpp] 📤 #${job.id} ${comoQuem(job)} → ${nomeDo(job)}`]
+  if (job.scheduled_for) linhas.push(`sai em ${quando(job.scheduled_for, timezone)}`)
+  linhas.push('', conteudoDo(job), '', job.scheduled_for ? `/no ${job.id} cancela` : '/undo apaga')
+  return linhas.join('\n')
+}
+
 export function formatQueue({ pending, scheduled }, timezone) {
   if (!pending.length && !scheduled.length) return '[wpp] nada pendente e nada agendado.'
 
