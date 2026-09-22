@@ -83,6 +83,22 @@ const ESQUEMA = [
 
   'CREATE INDEX IF NOT EXISTS idx_bot_messages_number ON bot_messages(number, ts)',
 
+  // Something he asked to happen again, or later: at its hour the assistant
+  // is handed `prompt` in its own session and answers him in the chat.
+  `CREATE TABLE IF NOT EXISTS tasks (
+     id          INTEGER PRIMARY KEY,
+     prompt      TEXT    NOT NULL,
+     label       TEXT,
+     daily_at    TEXT,
+     tz          TEXT,
+     next_run    INTEGER NOT NULL,
+     status      TEXT    NOT NULL,
+     created_at  INTEGER NOT NULL,
+     last_run_at INTEGER
+   )`,
+
+  'CREATE INDEX IF NOT EXISTS idx_tasks_prox ON tasks(status, next_run)',
+
   // A reply the bot passed on to the owner, keyed by the id of the message he
   // sees — quoting that message is how he answers the right person.
   `CREATE TABLE IF NOT EXISTS relay (

@@ -585,6 +585,16 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
     return sessao ?? await sessions.create({ cwd: wpp.agentCwd, name: SESSAO_WPP, activate: false })
   }
 
+  // A scheduled task come due: the assistant gets the sentence he wrote back,
+  // in its own session, and answers him in the chat like any other turn. It is
+  // framed so the assistant knows this is the hour arriving, not him asking.
+  async function rodarTarefa({ id, prompt, label }) {
+    const sessao = await sessaoDoMordomo()
+    const cabecalho = `[tarefa agendada #${id}${label ? ` — ${label}` : ''}: chegou a hora. Faça o que ele pediu e responda em uma ou duas linhas, só o resultado.`
+      + ` Se o que ele esperava já aconteceu e não faz mais sentido repetir, encerre com \`node act.mjs tarefa-fim --id ${id}\` e diga isso.]`
+    return despachar(sessao, `${cabecalho}\n\n${prompt}`)
+  }
+
   // The butler handing work to a project session, through the API. Same path
   // as a typed `@sessão`, so the reply reaches him labelled with that name.
   function despacharDeFora({ session, prompt, cwd }) {
@@ -711,5 +721,5 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
     return despachar(sessao, prompt)
   }
 
-  return { handle, recuperar, despacharDeFora }
+  return { handle, recuperar, despacharDeFora, rodarTarefa }
 }

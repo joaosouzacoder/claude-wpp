@@ -79,6 +79,7 @@ export function createApi({
   onWpp = null,
   onDispatch = null,
   onUndo = null,
+  tasks = null,
   sessionList = () => [],
   personalState = null,
   notifier = null,
@@ -325,6 +326,53 @@ export function createApi({
       const r = await onUndo()
       if (!r.ok) return json(res, 409, { ok: false, error: r.error })
       return json(res, 200, { ok: true, to: r.job.chat_name ?? r.job.chat_jid, body: r.job.body })
+    }
+
+    // Something to happen again, or later. The assistant used to improvise
+    // this with the host's crontab, where nothing could say afterwards what
+    // was scheduled or stop it going wrong quietly.
+    if (url.pathname === '/tasks') {
+      if (!autorizado()) return json(res, 401, { ok: false, error: 'não autorizado' })
+      if (!tasks) return json(res, 503, { ok: false, error: 'agenda não configurada' })
+
+      if (req.method === 'GET') {
+        return json(res, 200, { ok: true, tasks: tasks.list() })
+      }
+      if (req.method !== 'POST') return json(res, 405, { ok: false, error: 'método não permitido' })
+
+      let corpo
+      try {
+        corpo = JSON.parse(await lerBody(req))
+      } catch {
+        return json(res, 400, { ok: false, error: 'json inválido' })
+      }
+
+      let tarefa
+      try {
+        tarefa = tasks.create({ prompt: corpo?.prompt, label: corpo?.label ?? null, dailyAt: corpo?.dailyAt ?? null, at: corpo?.at ?? null })
+      } catch (err) {
+        return json(res, 400, { ok: false, error: err.message })
+      }
+      return json(res, 200, { ok: true, id: tarefa.id, nextRun: tarefa.next_run, dailyAt: tarefa.daily_at })
+    }
+
+    if (url.pathname === '/tasks/close') {
+      if (req.method !== 'POST') return json(res, 405, { ok: false, error: 'método não permitido' })
+      if (!autorizado()) return json(res, 401, { ok: false, error: 'não autorizado' })
+      if (!tasks) return json(res, 503, { ok: false, error: 'agenda não configurada' })
+
+      let corpo
+      try {
+        corpo = JSON.parse(await lerBody(req))
+      } catch {
+        return json(res, 400, { ok: false, error: 'json inválido' })
+      }
+
+      const id = Number(corpo?.id)
+      if (!Number.isInteger(id) || id <= 0) return json(res, 400, { ok: false, error: 'id é obrigatório' })
+      const tarefa = corpo?.done === true ? tasks.finish(id) : tasks.cancel(id)
+      if (!tarefa) return json(res, 404, { ok: false, error: `não há tarefa ativa #${id}` })
+      return json(res, 200, { ok: true, id, status: tarefa.status })
     }
 
     if (url.pathname === '/sessions') {

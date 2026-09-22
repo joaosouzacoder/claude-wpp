@@ -1404,6 +1404,16 @@ test('@sessão continua sendo como ele fala direto com uma sessão de código', 
   assert.equal(pedidos.length, 2)
 })
 
+test('uma tarefa agendada chega ao Claudinei com a hora e como encerrar', async () => {
+  const { handler, pedidos } = montarComWpp({})
+  await handler.rodarTarefa({ id: 7, prompt: 'confere o chamado da AWS e me conta', label: 'cota aws' })
+
+  const enviado = pedidos.at(-1).prompt
+  assert.match(enviado, /tarefa agendada #7 — cota aws/)
+  assert.match(enviado, /act\.mjs tarefa-fim --id 7/)
+  assert.match(enviado, /confere o chamado da AWS e me conta$/)
+})
+
 test('o Claudinei despacha trabalho para uma sessão de projeto, e nunca para si mesmo', async () => {
   const { handler, pedidos, sessions } = montarComWpp({ classify: async () => 'NENHUM' })
   await handler.handle('/new ~ infra')
