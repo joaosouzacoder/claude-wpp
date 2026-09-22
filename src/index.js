@@ -153,6 +153,7 @@ async function main() {
     wpp: pessoal && {
       outbox: pessoal.outbox,
       agentCwd: config.agentCwd,
+      botContatos: () => relay.contatos(),
       tick: pessoal.scheduler.tick,
       timezone: config.timezone,
       undo: pessoal.wpp.undo,

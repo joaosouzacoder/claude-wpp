@@ -631,11 +631,13 @@ function montarComWpp({ run, undo, classify, formalizar = async ({ texto }) => `
   const outbox = createOutbox({ db, now: () => 1000 })
   const ditos = []
   const passadas = []
+  const pedidos = []
 
+  const sessions = createSessions({ store: createStore(join(dir, 'state.json')), defaultCwd: dir })
   const handler = createHandler({
     classify,
-    sessions: createSessions({ store: createStore(join(dir, 'state.json')), defaultCwd: dir }),
-    run: run ?? (async () => ({ ok: true, text: 'rascunho pronto', sessionId: 'sid', error: null })),
+    sessions,
+    run: run ?? (async ({ cwd, prompt }) => { pedidos.push({ cwd, prompt }); return { ok: true, text: 'rascunho pronto', sessionId: 'sid', error: null } }),
     transcribe: async () => ({ ok: true, text: '', error: null }),
     reply: async (t) => { ditos.push(t) },
     config: { slowNoticeMs: 10, timeoutMs: 1000, maxMessageChars: 500, claudeBin: 'claude', defaultCwd: dir },
@@ -644,6 +646,7 @@ function montarComWpp({ run, undo, classify, formalizar = async ({ texto }) => `
       agentCwd: dir,
       tick: async () => { passadas.push(1) },
       undo: undo ?? (async () => ({ ok: true, job: { chat_name: 'Jane', body: 'traz o macbook' } })),
+      botContatos: () => [{ number: '5511911111111', name: 'Rogerio Garcia', last_sent_at: Math.floor(Date.now() / 1000) - 600 }],
       formalizar,
     },
   })
@@ -651,7 +654,7 @@ function montarComWpp({ run, undo, classify, formalizar = async ({ texto }) => `
   const rascunho = (extra = {}) =>
     outbox.create({ chatJid: '5@s.whatsapp.net', chatName: 'Jane', body: 'traz o macbook', ...extra })
 
-  return { handler, outbox, ditos, passadas, rascunho }
+  return { handler, outbox, ditos, passadas, rascunho, pedidos, sessions, dir }
 }
 
 test('/wpp manda o pedido para a sessão dedicada, sem trocar a ativa', async () => {
@@ -1361,4 +1364,61 @@ test('slash commands and @session skip the classifier', async () => {
   await handler.handle('/new ~ s9')
   await handler.handle('@s9 oi')
   assert.equal(chamadas, 0)
+})
+
+test('o que ele escreve depois de um /wpp continua com o agente, não com a sessão de código', async () => {
+  const { handler, pedidos, sessions } = montarComWpp({ classify: async () => 'NENHUM' })
+  await handler.handle('/new ~ infra')
+  await handler.handle('/wpp avisa meu pai que paguei os documentos')
+  await handler.handle('rogerio garcia')
+
+  assert.equal(sessions.active().name, 'infra', 'a sessão ativa não muda')
+  assert.equal(pedidos.length, 2)
+  assert.match(pedidos[0].prompt, /avisa meu pai/)
+  assert.equal(pedidos[1].prompt, 'rogerio garcia', 'a resposta foi para o agente, literal')
+})
+
+test('decidir o rascunho, ou chamar uma sessão pelo nome, encerra a conversa com o /wpp', async () => {
+  for (const fecha of ['/no 1', '/use infra', '/new ~ outra']) {
+    const { handler, pedidos, rascunho } = montarComWpp({ classify: async () => 'NENHUM' })
+    await handler.handle('/new ~ infra')
+    rascunho()
+    await handler.handle('/wpp avisa alguém')
+    await handler.handle(fecha)
+    await handler.handle('e aí, arruma o build')
+    assert.equal(pedidos.at(-1).prompt, 'e aí, arruma o build')
+    assert.notEqual(pedidos.at(-1).cwd, undefined)
+    assert.equal(pedidos.length, 2, fecha)
+  }
+})
+
+test('@sessão continua alcançando outra sessão durante a conversa com o /wpp', async () => {
+  const { handler, pedidos } = montarComWpp({ classify: async () => 'NENHUM' })
+  await handler.handle('/new ~ infra')
+  await handler.handle('/wpp avisa alguém')
+  await handler.handle('@infra roda os testes')
+  assert.equal(pedidos.at(-1).prompt, 'roda os testes')
+
+  // And after @sessão, plain text is back to the active session, not the agent.
+  await handler.handle('e o lint?')
+  assert.equal(pedidos.at(-1).prompt, 'e o lint?')
+  assert.equal(pedidos.length, 3)
+})
+
+test('o pedido do /wpp leva quem o bot já contatou, para não cumprimentar de novo', async () => {
+  const { handler, pedidos } = montarComWpp({})
+  await handler.handle('/wpp avisa o Rogério que paguei')
+  assert.match(pedidos[0].prompt, /já conversou com estas pessoas/)
+  assert.match(pedidos[0].prompt, /Rogerio Garcia \(5511911111111\)/)
+  assert.match(pedidos[0].prompt, /sem cumprimentar nem se apresentar de novo/)
+})
+
+test('a sessão do wpp é refeita quando as instruções do agente mudam', async () => {
+  const { handler, sessions, dir } = montarComWpp({})
+  await handler.handle('/wpp primeira')
+  const antes = sessions.get('wpp').createdAt
+
+  writeFileSync(join(dir, 'CLAUDE.md'), '# instruções novas')
+  await handler.handle('/wpp segunda')
+  assert.notEqual(sessions.get('wpp').createdAt, antes, 'devia ter recriado a sessão')
 })

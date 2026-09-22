@@ -132,6 +132,7 @@ export function createRelay({ db, ownerNumber, notifyOwner, sendAsBot, formalize
       ON CONFLICT(number) DO UPDATE SET last_sent_at = excluded.last_sent_at, name = COALESCE(excluded.name, bot_contacts.name)
     `),
     contatos: db.prepare('SELECT number, name FROM bot_contacts'),
+    contatosComData: db.prepare('SELECT number, name, last_sent_at FROM bot_contacts ORDER BY last_sent_at DESC LIMIT 15'),
     nomeDoChat: db.prepare('SELECT name FROM chats WHERE jid = ?'),
     registrar: db.prepare('INSERT INTO relay (owner_wa_id, from_number, from_name, body, received_at) VALUES (?, ?, ?, ?, ?)'),
     porWaId: db.prepare('SELECT * FROM relay WHERE owner_wa_id = ?'),
@@ -250,5 +251,5 @@ export function createRelay({ db, ownerNumber, notifyOwner, sendAsBot, formalize
     return numero ? historicoDe(numero) : []
   }
 
-  return { noteSent, onOther, porCitacao, porNumero, answer, historico }
+  return { noteSent, onOther, porCitacao, porNumero, answer, historico, contatos: () => stmt.contatosComData.all() }
 }

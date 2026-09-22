@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createIntent, lerIntencao, promptIntencao, textoCitado, rascunhoNomeado, classificadorClaude, MAX_CHARS_INTENCAO } from '../src/intent.js'
+import { createIntent, lerIntencao, promptIntencao, textoCitado, rascunhoNomeado, classificadorClaude, comTextoOriginal, MAX_CHARS_INTENCAO } from '../src/intent.js'
 
 const conhecidos = new Set(['ok', 'bot', 'no', 'wpp', 'ls'])
 
@@ -63,6 +63,20 @@ test('classificadorClaude runs claude -p and fails on a non-zero exit or timeout
   await assert.rejects(falha('prompt'), /not logged in/)
   const lento = classificadorClaude({ bin: 'claude', model: 'haiku', cwd: '/tmp', timeoutMs: 1000, exec: async () => ({ code: null, stdout: '', stderr: '', timedOut: true }) })
   await assert.rejects(lento('prompt'), /tempo esgotado/)
+})
+
+test('/wpp carries his own words, never the model paraphrase', async () => {
+  const pedido = 'manda pro meu pai que você (claudinei) já pagou os documentos do carro'
+  const interpretar = createIntent({
+    classify: async () => '/wpp avisa o pai dele que os documentos foram pagos',
+    ajuda: '',
+    conhecidos,
+  })
+  assert.equal(await interpretar({ texto: pedido, pendentes: [] }), `/wpp ${pedido}`)
+
+  // Every other command is the model's line, as it wrote it.
+  assert.equal(comTextoOriginal('/no 4', 'joga fora o 4'), '/no 4')
+  assert.equal(comTextoOriginal('/wpp qualquer coisa', '  avisa a Ana  '), '/wpp avisa a Ana')
 })
 
 test('a failed or skipped classification is "not a command"', async () => {
