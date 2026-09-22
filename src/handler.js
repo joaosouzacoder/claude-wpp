@@ -120,7 +120,7 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
     return [
       pedido,
       '',
-      '[o bot (você, falando em nome do João pelo número do bot) já conversou com estas pessoas:',
+      `[pelo número do bot, você (${wpp.assistente ?? 'o assistente'}) já conversou com estas pessoas:`,
       lista,
       'antes de escrever --body-bot para alguém desta lista, leia a conversa em bot_messages e continue de onde parou, sem cumprimentar nem se apresentar de novo]',
     ].join('\n')

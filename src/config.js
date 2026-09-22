@@ -40,6 +40,9 @@ const DEFAULTS = {
   triageModel: 'sonnet',
   triageTimeoutMs: 3 * 60 * 1000,
   personalNumber: null,
+  // How the assistant introduces itself and signs to other people. A name,
+  // not a description: whoever receives the message is talking to him.
+  assistantName: 'Claudinei',
   timezone: 'America/Sao_Paulo',
   schedulerIntervalMs: 30000,
   scheduleToleranceSec: 3600,
