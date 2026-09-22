@@ -26,7 +26,7 @@ function descreverMidia(kind) {
 // The last messages exchanged with that person, oldest first, as the models
 // below read them.
 export function formatarHistorico(linhas) {
-  return linhas.map((l) => `${l.from_me ? 'Bot (em nome do João)' : 'A pessoa'}: ${l.body}`).join('\n')
+  return linhas.map((l) => `${l.from_me ? 'Você' : 'A pessoa'}: ${l.body}`).join('\n')
 }
 
 // Greeting every message is what makes the bot read like a stranger each
@@ -37,10 +37,31 @@ const SEM_SAUDACAO = [
   'houver conversa anterior.',
 ]
 
+export const ASSISTENTE_PADRAO = 'Claudinei'
+
+// Who the person on the other end is talking to. Every prompt that writes in
+// the owner's name says this, because a prompt that only says "um assistente"
+// leaves the model to fill the blank — and it filled it with "o Claude do
+// João", which is not who his father, his colleagues or his suppliers think
+// they are dealing with.
+export function persona(assistente = ASSISTENTE_PADRAO) {
+  return [
+    `Você é ${assistente}, assistente pessoal do João. É assim que você se apresenta e assina,`,
+    'quando for o caso: o primeiro nome, nada mais.',
+    `Nunca se descreva como Claude, IA, inteligência artificial, bot, robô, assistente virtual,`,
+    'sistema ou programa, e nunca assine com nenhuma dessas palavras. Nada de aviso automático,',
+    'nada de "mensagem gerada por".',
+    'Se alguém perguntar sinceramente se está falando com uma pessoa ou com uma máquina, não minta:',
+    'diga que é o assistente do João e que a pessoa pode falar com ele direto — e, nesse caso,',
+    'responda com "avisar": true para o João saber que perguntaram. Fora essa pergunta direta,',
+    'você não levanta o assunto.',
+  ]
+}
+
 // What the formalizer must answer with: the message and nothing else.
 // Also used for a draft /bot sends without a formal version of its own, in
 // which case there is no incoming message to answer.
-export function promptFormal({ nome, recebida = null, resposta, historico = [] }) {
+export function promptFormal({ nome, recebida = null, resposta, historico = [], assistente = ASSISTENTE_PADRAO }) {
   const contexto = recebida
     ? [`Mensagem que ${nome ?? 'a pessoa'} mandou:`, `"${recebida}"`, '']
     : []
@@ -48,8 +69,10 @@ export function promptFormal({ nome, recebida = null, resposta, historico = [] }
     ? ['Conversa até aqui, da mais antiga para a mais recente:', formatarHistorico(historico), '']
     : []
   return [
+    ...persona(assistente),
+    '',
     'Reescreva a mensagem abaixo em português formal e cordial, como uma mensagem de WhatsApp',
-    `enviada em nome do João por um assistente${nome ? `, para ${nome}` : ''}. Mantenha exatamente o`,
+    `enviada por você em nome do João${nome ? `, para ${nome}` : ''}. Mantenha exatamente o`,
     'conteúdo, os fatos e os compromissos — não acrescente nem retire informação, não invente',
     'saudações longas. Responda SOMENTE com o texto final da mensagem, sem aspas e sem comentários.',
     ...SEM_SAUDACAO,
@@ -64,9 +87,11 @@ export function promptFormal({ nome, recebida = null, resposta, historico = [] }
 // Deciding what to do with a message someone sent the bot. The text in it
 // comes from a third party, so this prompt says plainly that it is only ever
 // something to read — and the model that answers it runs with no tools at all.
-export function promptTriagem({ nome, historico, mensagem }) {
+export function promptTriagem({ nome, historico, mensagem, assistente = ASSISTENTE_PADRAO }) {
   return [
-    'Você é o assistente do João no WhatsApp. Alguém escreveu para o seu número.',
+    ...persona(assistente),
+    '',
+    'Alguém escreveu para o seu número no WhatsApp.',
     'Decida uma de duas coisas: responder você mesmo, ou avisar o João.',
     '',
     'RESPONDA você mesmo apenas o que não precisa do João e não compromete nada:',
@@ -91,8 +116,10 @@ export function promptTriagem({ nome, historico, mensagem }) {
     `"${mensagem}"`,
     '',
     'Responda SOMENTE com um JSON numa linha, sem comentários e sem cercas de código:',
-    '{"acao":"responder","texto":"<a resposta que o bot manda>"}',
+    '{"acao":"responder","texto":"<a resposta que você manda>"}',
     'ou {"acao":"avisar","motivo":"<o que a pessoa quer, em até 10 palavras>"}',
+    'Acrescente "avisar":true ao responder quando o João precisar saber assim mesmo:',
+    '{"acao":"responder","texto":"…","avisar":true}',
   ].join('\n')
 }
 
@@ -110,7 +137,7 @@ export function lerTriagem(saida) {
   }
   if (json?.acao === 'responder') {
     const resposta = String(json.texto ?? '').trim()
-    return resposta ? { acao: 'responder', texto: resposta } : null
+    return resposta ? { acao: 'responder', texto: resposta, avisar: json.avisar === true } : null
   }
   if (json?.acao === 'avisar') return { acao: 'avisar', motivo: String(json.motivo ?? '').trim() || null }
   return null
@@ -125,7 +152,7 @@ export function limparFormal(texto) {
 // already under way and what was last said; not the person's whole history.
 const HISTORICO_MAX = 20
 
-export function createRelay({ db, ownerNumber, notifyOwner, sendAsBot, formalize, triage = null, now = () => Math.floor(Date.now() / 1000), log = console }) {
+export function createRelay({ db, ownerNumber, notifyOwner, sendAsBot, formalize, triage = null, assistente = ASSISTENTE_PADRAO, now = () => Math.floor(Date.now() / 1000), log = console }) {
   const stmt = {
     lembrar: db.prepare(`
       INSERT INTO bot_contacts (number, name, last_sent_at) VALUES (?, ?, ?)
@@ -180,13 +207,20 @@ export function createRelay({ db, ownerNumber, notifyOwner, sendAsBot, formalize
 
     // Only a clear "this needs nobody" is answered here. Everything else, and
     // every failure, reaches the owner exactly as it did before.
+    let respondida = null
     const decisao = text ? await decidir({ nome, historico, mensagem: corpo }) : null
     if (decisao?.acao === 'responder') {
       try {
         await sendAsBot(`${contato.number}@s.whatsapp.net`, decisao.texto)
-        await notifyOwner(`💬 ${nome}:\n\n${corpo}\n\n🤖 Respondi por você:\n\n"${decisao.texto}"`)
-        stmt.podarMensagens.run(now() - RETENCAO_S)
-        return
+        // Answered on his behalf, but still his to pick up: a reply flagged
+        // this way goes through the numbered path too, so he can carry the
+        // conversation on by quoting it.
+        if (!decisao.avisar) {
+          await notifyOwner(`💬 ${nome}:\n\n${corpo}\n\n🤖 Respondi por você:\n\n"${decisao.texto}"`)
+          stmt.podarMensagens.run(now() - RETENCAO_S)
+          return
+        }
+        respondida = decisao.texto
       } catch (err) {
         log.warn?.(`[relay] não consegui responder ${nome} (${err.message}); repasso para o dono.`)
       }
@@ -195,7 +229,8 @@ export function createRelay({ db, ownerNumber, notifyOwner, sendAsBot, formalize
     const { lastInsertRowid } = stmt.registrar.run(null, contato.number, nome, corpo, now())
     const id = Number(lastInsertRowid)
     const motivo = decisao?.motivo ? `\n📌 ${decisao.motivo}` : ''
-    const waId = await notifyOwner(`💬 ${nome} respondeu (#${id}):\n\n${corpo}${motivo}\n\n↩️ Responda citando esta mensagem (ou /r ${id} <texto>) — eu formalizo e mando pelo bot.`)
+    const jaRespondi = respondida ? `\n\n🤖 Já respondi:\n\n"${respondida}"` : ''
+    const waId = await notifyOwner(`💬 ${nome} respondeu (#${id}):\n\n${corpo}${motivo}${jaRespondi}\n\n↩️ Responda citando esta mensagem (ou /r ${id} <texto>) — eu formalizo e mando pelo bot.`)
     if (waId) stmt.vincular.run(waId, id)
     stmt.podar.run(now() - RETENCAO_S)
     stmt.podarMensagens.run(now() - RETENCAO_S)
@@ -204,7 +239,7 @@ export function createRelay({ db, ownerNumber, notifyOwner, sendAsBot, formalize
   async function decidir({ nome, historico, mensagem }) {
     if (!triage) return null
     try {
-      return lerTriagem(await triage(promptTriagem({ nome, historico, mensagem })))
+      return lerTriagem(await triage(promptTriagem({ nome, historico, mensagem, assistente })))
     } catch (err) {
       log.warn?.(`[relay] triagem falhou (${err.message}); repasso para o dono.`)
       return null
@@ -230,6 +265,7 @@ export function createRelay({ db, ownerNumber, notifyOwner, sendAsBot, formalize
         recebida: linha.body,
         resposta,
         historico: historicoDe(linha.from_number),
+        assistente,
       })))
     } catch (err) {
       return { ok: false, error: `não consegui formalizar (${err.message}) — não mandei nada para ${linha.from_name}.` }

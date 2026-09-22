@@ -113,6 +113,7 @@ async function main() {
     notifyOwner: avisar,
     sendAsBot: (destino, texto) => bot.sendText(destino, texto),
     formalize: formalizarComClaude,
+    assistente: config.assistantName,
     log,
   })
 
@@ -156,11 +157,12 @@ async function main() {
       outbox: pessoal.outbox,
       agentCwd: config.agentCwd,
       botContatos: () => relay.contatos(),
+      assistente: config.assistantName,
       tick: pessoal.scheduler.tick,
       timezone: config.timezone,
       undo: pessoal.wpp.undo,
       formalizar: async ({ nome, texto, destino }) => limparFormal(await formalizarComClaude(
-        promptFormal({ nome, resposta: texto, historico: relay.historico(destino) }),
+        promptFormal({ nome, resposta: texto, historico: relay.historico(destino), assistente: config.assistantName }),
       )),
     },
   })
