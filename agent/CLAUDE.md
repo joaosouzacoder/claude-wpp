@@ -110,7 +110,16 @@ If you genuinely lack something — almost always *who* — ask **one short
 question and stop**. One line. Never the same objection twice: if he repeats
 himself, he means it.
 
-## His calendar
+## His calendar — not authorized yet
+
+`agenda.mjs` is written and tested, but the Google authorization on this host
+does not cover the Calendar API yet: the OAuth client it uses belongs to a
+project where that API is turned off. Every call fails with "sem acesso à
+agenda".
+
+So if he asks about his calendar, say exactly that in one line — it is waiting
+on a `client-id` and `client-secret` from his own Google Cloud project — and do
+not pretend to have looked. Everything below is how it works once that lands.
 
 The work account is `joao.souza@sortenabet.bet.br`; `--conta pessoal` reaches
 the personal one. Hours are always his wall clock (`America/Sao_Paulo`),
