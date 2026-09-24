@@ -259,9 +259,10 @@ test('state failed sem resposta nenhuma, resumindo sessão antiga: falha rápido
   assert.match(r.error, /failed/)
   assert.equal(r.sessionBroken, true, 'o alvo do --resume está provadamente morto')
   // 1 checagem do busy-precheck (por causa do --resume) + 1 do próprio loop de
-  // poll — não chega a esperar as três olhadas quietas de OLHADAS_QUIETAS,
-  // porque failed não se resolve sozinho como um "ainda ocupado" comum.
-  assert.equal(checagens, 2)
+  // poll + 1 da varredura no finally — não chega a esperar as três olhadas
+  // quietas de OLHADAS_QUIETAS, porque failed não se resolve sozinho como um
+  // "ainda ocupado" comum.
+  assert.equal(checagens, 3)
 })
 
 test('state failed numa sessão nova (sem --resume) não marca nada como morto: não havia id pra matar', async () => {
@@ -433,9 +434,8 @@ test('abort chama stop com o id certo e devolve interrompido', async () => {
   assert.equal(r.ok, false)
   assert.match(r.error, /interrompid/i)
   assert.ok(paradas.every((id) => id === 'abc12345') && paradas.length >= 1)
-  // Interromper solta o processo, mas a conversa continua na lista: apagar
-  // entrada de `claude agents` não é coisa que o bot faça.
-  assert.deepEqual(removidas, [])
+  // Interromper não deixa o agente que este turno criou pendurado.
+  assert.deepEqual(removidas, ['abc12345'])
 })
 
 test('abort chegado durante o disparo ainda para a sessão assim que o id é conhecido', async () => {
@@ -468,7 +468,7 @@ test('timeoutMs excedido chama stop e devolve erro de tempo limite', async () =>
   assert.ok(paradas.every((id) => id === 'abc12345') && paradas.length >= 1)
 })
 
-test('o turno para o agente que criou, e não remove nada da lista', async () => {
+test('o turno limpa o agente que ele mesmo criou', async () => {
   const paradas = []
   const removidas = []
   const { claude } = montar({
@@ -482,23 +482,25 @@ test('o turno para o agente que criou, e não remove nada da lista', async () =>
   })
   const r = await claude.run({ ...base })
   assert.equal(r.ok, true)
-  assert.deepEqual(paradas, ['abc12345'], 'solta o processo do próprio agente')
-  assert.deepEqual(removidas, [], 'e não apaga nada de `claude agents`')
+  assert.deepEqual(paradas, ['abc12345'])
+  assert.deepEqual(removidas, ['abc12345'])
 })
 
-// Ele abre uma sessão no claude agents e manda o bot usá-la. Antes, o fim do
-// turno varria a lista pelo sessionId retomado e a sessão dele sumia da
-// listagem — que é exatamente o que ele não quer.
-test('a sessão que ELE abriu continua na lista depois de o bot responder nela', async () => {
-  const removidas = []
+// Ele abre uma sessão no claude agents e o bot passa a responder nela. Cada
+// turno bifurca para um id novo: as bifurcações são nossas e vão embora, a
+// sessão dele fica — senão some da lista dele, ou vira uma segunda "infra"
+// a cada mensagem.
+test('varre as bifurcações do próprio bot e nunca a sessão que ELE abriu', async () => {
   const paradas = []
+  const removidas = []
   const { claude } = montar({
     respostas: {
       '--bg': { code: 0, stdout: BG_OUT('abc12345') },
       agents: {
         code: 0,
         stdout: JSON.stringify([
-          { id: 'dele', sessionId: 'sid-dele', status: 'idle' },
+          { id: 'id-dele', sessionId: 'sid-dele', status: 'idle' },
+          { id: 'bifurcacao-velha', sessionId: 'sid-bifurcada', status: 'idle' },
           { id: 'abc12345', sessionId: 'sid-bifurcada', status: 'idle' },
         ]),
       },
@@ -507,12 +509,56 @@ test('a sessão que ELE abriu continua na lista depois de o bot responder nela',
     },
     readReply: () => ({ content: 'pronto', timestamp: new Date(2_000_000).toISOString() }),
   })
-  const r = await claude.run({ ...base, sessionId: 'sid-dele' })
+  const r = await claude.run({ ...base, sessionId: 'sid-dele', preservar: ['sid-dele'] })
 
   assert.equal(r.ok, true)
   assert.equal(r.sessionId, 'sid-bifurcada')
-  assert.deepEqual(removidas, [], 'nada foi apagado')
-  assert.ok(!paradas.includes('dele'), 'e a sessão dele nem foi parada')
+  assert.ok(removidas.includes('abc12345'), 'a que este turno criou')
+  assert.ok(removidas.includes('bifurcacao-velha'), 'e a bifurcação que sobrou do turno anterior')
+  assert.ok(!removidas.includes('id-dele'), 'a sessão dele fica')
+  assert.ok(!paradas.includes('id-dele'), 'e nem é parada')
+})
+
+test('sem preservar nada, a sessão de origem também é varrida (comportamento de sessão do próprio bot)', async () => {
+  const removidas = []
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: {
+        code: 0,
+        stdout: JSON.stringify([
+          { id: 'origem', sessionId: 'sid-1', status: 'idle' },
+          { id: 'abc12345', sessionId: 'sid-2', status: 'idle' },
+        ]),
+      },
+      rm: (args) => { removidas.push(args[1]); return { code: 0 } },
+    },
+    readReply: () => ({ content: 'pronto', timestamp: new Date(2_000_000).toISOString() }),
+  })
+  await claude.run({ ...base, sessionId: 'sid-1' })
+  assert.ok(removidas.includes('origem'))
+  assert.ok(removidas.includes('abc12345'))
+})
+
+test('a varredura nunca mexe numa entrada que ainda está busy', async () => {
+  const removidas = []
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: {
+        code: 0,
+        stdout: JSON.stringify([
+          { id: 'ainda-rodando', sessionId: 'sid-1', status: 'busy' },
+          { id: 'abc12345', sessionId: 'sid-1', status: 'idle' },
+        ]),
+      },
+      rm: (args) => { removidas.push(args[1]); return { code: 0 } },
+    },
+    readReply: () => ({ content: 'pronto', timestamp: new Date(2_000_000).toISOString() }),
+  })
+  const r = await claude.run({ ...base, sessionId: 'sid-2' })
+  assert.equal(r.ok, true)
+  assert.deepEqual(removidas, ['abc12345'])
 })
 
 test('dispara onSlow enquanto o run demora de verdade', async () => {
