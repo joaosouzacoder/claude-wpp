@@ -254,11 +254,14 @@ whether the previous one is still around — resuming a session whose process
 has already fully exited (rather than one merely left idle) forks into a new
 conversation id, and claude-wpp follows that id from then on.
 
-**It stops its own agent and deletes nothing.** Stopping used to be followed
-by `claude rm`, and by a sweep of every entry under the resumed conversation
-id — which meant a session you had opened yourself in `claude agents`
-vanished from your list the first time the bot answered on it. Entries stay;
-the clutter is the price of not deleting your work.
+**It cleans up its own forks, and never your session.** Each turn resumes
+into a fork with a new id, so the entries it creates are swept when the turn
+ends — otherwise a new `infra` would appear in `claude agents` after every
+message, and the next dispatch could no longer tell which one is yours. A
+conversation you opened yourself is exempt: once a name has been adopted from
+it, that id is neither stopped nor removed, ever. It used to be swept along
+with the rest, which is how a session you opened vanished the first time the
+bot answered on it.
 
 ### A name means your session
 

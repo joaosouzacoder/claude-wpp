@@ -185,6 +185,9 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
       prompt,
       sessionId: sessao.claudeSessionId,
       appendSystemPrompt: FORMATO_WHATSAPP,
+      // The conversation he opened himself, when this name was taken over
+      // from one: the sweep may tidy up our own forks, never his session.
+      preservar: sessao.adotadaDe ? [sessao.adotadaDe] : [],
     }))
   }
 

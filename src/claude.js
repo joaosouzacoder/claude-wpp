@@ -115,6 +115,8 @@ export function createClaude({
     timeoutMs = null,
     blockedTimeoutMs = BLOQUEIO_TIMEOUT_MS,
     appendSystemPrompt = null,
+    // Conversation ids that are his, not ours: never stopped, never removed.
+    preservar = [],
     onSlow,
     onNotice,
     onDispatch,
@@ -164,7 +166,7 @@ export function createClaude({
       return { bgId, enviadoEm }
     }
 
-    return acompanhar({ bin, name, cwd, sessionId, slowNoticeMs, heartbeatMs, timeoutMs, blockedTimeoutMs, onSlow, onNotice, onDispatch, signal, disparar })
+    return acompanhar({ bin, name, cwd, sessionId, slowNoticeMs, heartbeatMs, timeoutMs, blockedTimeoutMs, preservar, onSlow, onNotice, onDispatch, signal, disparar })
   }
 
   // Picks a turn back up after this process restarted mid-run. The background
@@ -196,7 +198,7 @@ export function createClaude({
   }
 
   async function acompanhar({
-    bin, name, cwd, sessionId, slowNoticeMs, heartbeatMs, timeoutMs, blockedTimeoutMs, onSlow, onNotice, onDispatch, signal, disparar,
+    bin, name, cwd, sessionId, slowNoticeMs, heartbeatMs, timeoutMs, blockedTimeoutMs, preservar = [], onSlow, onNotice, onDispatch, signal, disparar,
     comecou = now(),
   }) {
     let finalizado = false
@@ -214,8 +216,12 @@ export function createClaude({
     let sessionIdCompleto = sessionId
     let bloqueadoDesde = null
     const pararSessao = () => (bgId ? runCli(bin, ['stop', bgId], { timeoutMs: STOP_TIMEOUT_MS }).catch(() => {}) : null)
-    const pararERemover = async (id) => {
+    const parar = async (id) => {
       await runCli(bin, ['stop', id], { timeoutMs: STOP_TIMEOUT_MS }).catch(() => {})
+    }
+    const pararERemover = async (id) => {
+      await parar(id)
+      await runCli(bin, ['rm', id], { timeoutMs: STOP_TIMEOUT_MS }).catch(() => {})
     }
     // The background agent has no reason to stay resident once its turn is
     // over: the next message dispatches a fresh `--bg --resume`, which
@@ -223,13 +229,21 @@ export function createClaude({
     // one is still around, and leaving it running holds a process open for
     // nothing. So the turn ends with `stop`.
     //
-    // It ends there. This used to also `rm` the entry, and to sweep every
-    // listing under the id it resumed — which is how a session the owner had
-    // opened himself disappeared from `claude agents` the moment the bot
-    // answered on it once. What the bot stops is its own agent; what it
-    // never does is delete a conversation from his list.
+    // Removing the entry matters too, and for the same reason it always did:
+    // every turn resumes into a *fork* with a brand-new id, so leaving each
+    // one behind means a new `infra` showing up in `claude agents` after
+    // every message — and the next dispatch then cannot tell which `infra` is
+    // his. What must never be touched is a conversation he opened himself:
+    // `preservar` carries those ids, and nothing in that set is stopped or
+    // removed, however the sweep finds it.
+    const intocavel = new Set([preservar].flat().filter(Boolean))
     const limparSessao = async () => {
       if (bgId) await pararERemover(bgId)
+      const alvos = new Set([sessionIdCompleto, sessionId].filter((id) => id && !intocavel.has(id)))
+      if (!alvos.size) return
+      const lista = await listAgents(bin).catch(() => null)
+      const orfas = lista?.filter((s) => alvos.has(s.sessionId) && s.id && s.id !== bgId && s.status !== 'busy') ?? []
+      for (const orfa of orfas) await pararERemover(orfa.id)
     }
 
     const aoAbortar = () => { pararSessao() }
