@@ -37,6 +37,11 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
     // `pending` surviving means the reply is owed, not that work is happening.
     pending: s.pending ?? null,
     queue: Array.isArray(s.queue) ? s.queue : [],
+    // Whose conversation this is. Dropping these on load is what used to make
+    // a restart forget that the session was his: the next turn then forked it
+    // instead of answering inside it, and the fork was swept as one of ours.
+    adotadaDe: s.adotadaDe ?? null,
+    agenteId: s.agenteId ?? null,
     busy: false,
     abort: null,
   }))
@@ -101,6 +106,10 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
       const s = api.get(name)
       if (!s) {
         const nova = api.create({ cwd, name, claudeSessionId, activate: false })
+        // Marked as his here too: a name adopted before the bot had one of
+        // its own is still his conversation, and without this the very first
+        // adoption was answered beside it instead of inside it.
+        nova.adotadaDe = claudeSessionId
         nova.agenteId = agenteId
         persist()
         return nova
