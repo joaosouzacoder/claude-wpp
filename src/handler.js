@@ -187,15 +187,30 @@ export function createHandler({ sessions, run, runAttached = null, attach = null
     // it through `claude attach`, so his session is the one that answers.
     // Anything that stops that — no tmux, a dead window — falls back to the
     // old path rather than dropping the message.
-    if (runAttached && sessao.adotadaDe && sessao.agenteId) {
+    if (runAttached && sessao.adotadaDe) {
+      // The agent id is looked up now, not trusted from disk: a session is
+      // relisted under a new id after a restart, and a conversation he
+      // started in his own terminal never had one. Without an id the window
+      // opens the conversation directly — see attached.js.
+      const agentId = await idDoAgente(sessao)
+      let janelaNova = null
       const r = await conduzir(sessao, (opcoes) => runAttached({
         ...opcoes,
         prompt,
-        agentId: sessao.agenteId,
+        agentId,
         sessionId: sessao.claudeSessionId,
         nome: sessao.name,
+      }).then((res) => {
+        if (res.abriu) janelaNova = res.janela
+        return res
       }), { permitirQueda: true })
-      if (!r?.caiu) return r
+      if (!r?.caiu) {
+        // Where the conversation now lives, said once: from his terminal the
+        // same window is one `tmux attach` away, and then both of them are
+        // typing into the same session instead of two beside each other.
+        if (janelaNova) await reply(`[${sessao.name}] essa conversa está rodando aqui: tmux attach -t ${janelaNova}`).catch(() => {})
+        return r
+      }
       log?.warn?.(`[${sessao.name}] não consegui responder dentro da sessão dele (${r.motivo}); vou pela via normal.`)
       sessions.beginRun(sessao.name, prompt)
     }
@@ -639,6 +654,21 @@ export function createHandler({ sessions, run, runAttached = null, attach = null
       && !minhas.has(a.sessionId)
       && nomeSugerido(a.name) === nome
       && (a.status ? a.status !== 'done' : a.state !== 'done'))
+  }
+
+  // The live agent behind a session of his, looked up every time. A stored id
+  // goes stale — `claude agents` relists a session under a new one — and a
+  // session he started in his own terminal never appears here at all, which
+  // is a null and not a failure: the window opens the conversation instead.
+  async function idDoAgente(sessao) {
+    if (!listAgents) return sessao.agenteId ?? null
+    const todas = await listAgents(config.claudeBin).catch(() => null)
+    if (!todas) return sessao.agenteId ?? null
+    const alvo = todas.find((a) => a.id
+      && (a.sessionId === sessao.claudeSessionId || a.sessionId === sessao.adotadaDe))
+    const id = alvo?.id ?? null
+    if (id !== sessao.agenteId) sessao.agenteId = id
+    return id
   }
 
   // `@infra` means the `infra` he is looking at, not a namesake the bot

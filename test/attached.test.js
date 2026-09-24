@@ -10,7 +10,7 @@ function tmuxFalso({ disponivel = true, viva = false, abrirOk = true, digitarOk 
     tmux: {
       disponivel: async () => disponivel,
       viva: async (n) => { chamadas.push(['viva', n]); return viva },
-      abrir: async (n, cmd) => { chamadas.push(['abrir', n, cmd]); return { ok: abrirOk, stderr: abrirOk ? '' : 'no server' } },
+      abrir: async (n, cmd, cwd) => { chamadas.push(['abrir', n, cmd, cwd]); return { ok: abrirOk, stderr: abrirOk ? '' : 'no server' } },
       digitar: async (n, texto) => { chamadas.push(['digitar', n, texto]); return { ok: digitarOk, stderr: digitarOk ? '' : 'sem sessão' } },
       matar: async (n) => { chamadas.push(['matar', n]); return { ok: true } },
     },
@@ -39,7 +39,7 @@ test('digita na sessão dele e devolve a resposta nova da transcrição', async 
   })
 
   const r = await runAttached({ ...base })
-  assert.deepEqual(r, { ok: true, text: 'pronto', sessionId: 'sid-dele', error: null })
+  assert.deepEqual(r, { ok: true, text: 'pronto', sessionId: 'sid-dele', janela: 'wpp-infra', abriu: false, error: null })
   assert.deepEqual(chamadas.find((c) => c[0] === 'digitar'), ['digitar', 'wpp-infra', 'roda os testes'])
   assert.ok(!chamadas.some((c) => c[0] === 'abrir'), 'a janela já estava viva')
 })
@@ -56,7 +56,7 @@ test('abre a janela com claude attach quando ela não existe', async () => {
 
   const r = await runAttached({ ...base })
   assert.equal(r.ok, true)
-  assert.deepEqual(chamadas.find((c) => c[0] === 'abrir'), ['abrir', 'wpp-infra', 'claude attach b8d4e3c5'])
+  assert.deepEqual(chamadas.find((c) => c[0] === 'abrir'), ['abrir', 'wpp-infra', 'claude attach b8d4e3c5', '/tmp'])
 })
 
 test('a resposta velha não conta como resposta deste turno', async () => {
@@ -100,7 +100,7 @@ test('sem tmux, com id estranho, ou sem conseguir digitar: falha dizendo o motiv
 
   const runAttached = createAttachedRunner({ tmux: tmuxFalso({ viva: true }).tmux, sleep: async () => {} })
   assert.match((await runAttached({ ...base, agentId: 'id; rm -rf /' })).error, /id de sessão estranho/)
-  assert.match((await runAttached({ ...base, agentId: null })).error, /faltou o id/)
+  assert.match((await runAttached({ ...base, sessionId: null })).error, /faltou o id da conversa/)
 
   const semDigitar = tmuxFalso({ viva: true, digitarOk: false })
   const falhando = createAttachedRunner({ tmux: semDigitar.tmux, readReply: async () => null, sleep: async () => {} })
