@@ -180,6 +180,9 @@ export function createHandler({ sessions, run, runAttached = null, attach = null
     // On disk before the first token: if this process dies mid-run, the next
     // boot is the only thing left that can tell you the reply is owed.
     sessions.beginRun(sessao.name, prompt)
+    // And remembered as ours, so that whatever the session goes on to say
+    // about this request can be told apart from what he asks it directly.
+    sessions.registrarPromptDoBot?.(sessao.name, prompt)
 
     // A session he opened himself is answered *inside* it: `--bg --resume`
     // would fork the conversation into a new id and leave his own sitting

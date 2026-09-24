@@ -30,6 +30,10 @@ export function createWatcher({
   // Where each session was last read. Starting at "now" on first sight, so a
   // restart never replays a conversation's backlog into his chat.
   const marcos = new Map()
+  // What the conversation is in the middle of: whether the chain running
+  // there started from a request of ours, and whether the last thing said to
+  // it came from the machine.
+  const estados = new Map()
 
   async function olhar(sessao) {
     // A turn of ours is in flight: that path already delivers the reply, and
@@ -37,29 +41,46 @@ export function createWatcher({
     if (sessao.busy || !sessao.claudeSessionId || !sessao.cwd) return null
 
     const marco = marcos.get(sessao.name) ?? null
+    const primeira = marco === null
     const entradas = await ler({ cwd: sessao.cwd, sessionId: sessao.claudeSessionId, desde: marco })
-    if (marco === null) {
-      // First look: note where the conversation is and say nothing about what
-      // came before.
-      marcos.set(sessao.name, entradas.at(-1)?.timestamp ?? new Date(now()).toISOString())
+    if (!entradas.length) {
+      // Nothing said yet: start the mark here so the backlog stays where it is.
+      if (primeira) marcos.set(sessao.name, new Date(now()).toISOString())
       return null
     }
-    if (!entradas.length) return null
 
-    // Walk forward keeping track of what prompted each answer. Only what
-    // followed a machine notice counts as the session speaking on its own;
-    // an answer to something he typed in the terminal is his to read there.
-    let sozinha = false
+    // Walk forward keeping track of what each answer belongs to. Two things
+    // have to hold for an answer to be worth sending. It has to follow a
+    // machine notice, or it is the turn's own reply, which was already
+    // delivered. And the request that started the chain has to be one of
+    // ours: what he asks at his own keyboard is answered on his screen, and
+    // echoing it to his phone is noise, however long the session took.
+    const estado = estados.get(sessao.name) ?? { doBot: false, sozinha: false }
     let ultima = null
     for (const entrada of entradas) {
       if (entrada.tipo === 'user') {
-        sozinha = AVISO_DE_MAQUINA.test(entrada.texto)
+        // A notice is not a request: it continues whatever chain is running.
+        if (AVISO_DE_MAQUINA.test(entrada.texto)) {
+          estado.sozinha = true
+          continue
+        }
+        estado.sozinha = false
+        estado.doBot = Boolean(sessions.foiPromptDoBot?.(sessao.name, entrada.texto))
         continue
       }
-      if (sozinha) ultima = entrada
+      if (estado.sozinha && estado.doBot) ultima = entrada
     }
+    // Kept across passes: the request that started a chain can be minutes and
+    // several passes behind the answer to it.
+    estados.set(sessao.name, estado)
 
     const fim = entradas.at(-1).timestamp
+    // First look: the walk above was only to learn where the conversation
+    // stands. Nothing said before this process started is his to receive now.
+    if (primeira) {
+      marcos.set(sessao.name, fim)
+      return null
+    }
     if (!ultima) {
       marcos.set(sessao.name, fim)
       return null
@@ -75,8 +96,9 @@ export function createWatcher({
 
   return {
     // For tests and for the boot path: pretend we have already seen
-    // everything up to here.
-    marcar(nome, timestamp) {
+    // everything up to here, optionally in the middle of a chain of ours.
+    marcar(nome, timestamp, estado = null) {
+      if (estado) estados.set(nome, { doBot: false, sozinha: false, ...estado })
       marcos.set(nome, timestamp)
     },
 
