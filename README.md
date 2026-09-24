@@ -267,9 +267,11 @@ id sent the turn down the forking path.
 
 **A session you started in your own terminal** has no entry in `claude agents`
 and so no id to attach to. There the window opens the conversation itself with
-`--resume`, which forks it once; the new id is found by looking for the
-transcript that appeared after the window opened, and from then on that window
-is where the conversation lives, so nothing forks again. The bot says the
+`--resume`, which continues in the same transcript when its process is gone —
+the outcome this path exists for. It forks only when the session is still
+hosted, and then a transcript appears right after the window opened and the
+reply is read from that one instead. Either way the window is where the
+conversation lives from then on, so nothing forks again. The bot says the
 window's name once — `tmux attach -t wpp-<name>` — and from that point you and
 the bot are typing into the same session instead of two beside each other.
 That window runs with permission prompts skipped, since nobody is sitting at
