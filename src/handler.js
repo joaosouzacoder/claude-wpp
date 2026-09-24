@@ -93,7 +93,7 @@ function ociosidade(iso) {
   return `${Math.floor(min / 60)}h`
 }
 
-export function createHandler({ sessions, run, attach = null, transcribe, reply, replyFile = null, config, wpp = null, listAgents = null, relay = null, classify = null, log = null }) {
+export function createHandler({ sessions, run, runAttached = null, attach = null, transcribe, reply, replyFile = null, config, wpp = null, listAgents = null, relay = null, classify = null, log = null }) {
   // What /manuais last showed, so /importar <n> knows which session that
   // number meant. Only ever read right after a fresh /manuais.
   let sessoesManuais = []
@@ -180,6 +180,26 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
     // On disk before the first token: if this process dies mid-run, the next
     // boot is the only thing left that can tell you the reply is owed.
     sessions.beginRun(sessao.name, prompt)
+
+    // A session he opened himself is answered *inside* it: `--bg --resume`
+    // would fork the conversation into a new id and leave his own sitting
+    // idle, which is exactly what he did not want. `runAttached` types into
+    // it through `claude attach`, so his session is the one that answers.
+    // Anything that stops that — no tmux, a dead window — falls back to the
+    // old path rather than dropping the message.
+    if (runAttached && sessao.adotadaDe && sessao.agenteId) {
+      const r = await conduzir(sessao, (opcoes) => runAttached({
+        ...opcoes,
+        prompt,
+        agentId: sessao.agenteId,
+        sessionId: sessao.claudeSessionId,
+        nome: sessao.name,
+      }), { permitirQueda: true })
+      if (!r?.caiu) return r
+      log?.warn?.(`[${sessao.name}] não consegui responder dentro da sessão dele (${r.motivo}); vou pela via normal.`)
+      sessions.beginRun(sessao.name, prompt)
+    }
+
     return conduzir(sessao, (opcoes) => run({
       ...opcoes,
       prompt,
@@ -198,7 +218,7 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
   // Carries one turn from start to delivered reply, whether it was dispatched
   // just now or picked back up after a restart: the busy flag, the progress
   // notices, the answer, and draining whatever queued up behind it.
-  async function conduzir(sessao, iniciar, { avisou = false } = {}) {
+  async function conduzir(sessao, iniciar, { avisou = false, permitirQueda = false } = {}) {
     sessao.busy = true
     sessao.abort = new AbortController()
 
@@ -232,6 +252,11 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
       // keeping it would only make every future message repeat this same
       // failure forever. Drop it so the next one starts a fresh conversation
       // instead of resuming a target that can never come back.
+      // Could not even get the message in front of him: say so upstream and
+      // let the caller try the other path, instead of reporting an error he
+      // can do nothing about.
+      if (permitirQueda && !r.ok && r.podeCair) return { caiu: true, motivo: r.error }
+
       if (r.sessionBroken) sessao.claudeSessionId = null
       else if (r.sessionId) sessao.claudeSessionId = r.sessionId
       sessions.touch(sessao.name)
@@ -632,7 +657,7 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
       // object `get` returns, so comparing afterwards always says "unchanged".
       const registrada = sessions.get(nome)
       const idAntes = registrada?.claudeSessionId ?? null
-      const sessao = sessions.adotar(nome, { cwd: alvo.cwd, claudeSessionId: alvo.sessionId })
+      const sessao = sessions.adotar(nome, { cwd: alvo.cwd, claudeSessionId: alvo.sessionId, agenteId: alvo.id ?? null })
       const adotada = idAntes !== alvo.sessionId
       return { sessao, adotada }
     }

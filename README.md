@@ -254,13 +254,22 @@ whether the previous one is still around — resuming a session whose process
 has already fully exited (rather than one merely left idle) forks into a new
 conversation id, and claude-wpp follows that id from then on.
 
-There is no way to write into a live agent from the CLI (`claude` has
-`attach`, `logs`, `stop`, `rm`, `respawn` — nothing that sends a turn), so
-every message necessarily resumes into a fork. On a conversation of yours,
-that fork runs under a name of its own — `infra-wpp` beside your `infra` —
-and **stays listed** after the turn, so the bot's side of the conversation is
-somewhere you can see and `claude attach`. Only one: the previous one is
-swept when the next message arrives.
+**A session you opened is answered inside it.** `claude --bg --resume` always
+forks the conversation into a new id, and the CLI has no verb that hands a
+turn to a live agent — but `claude attach` opens one in a terminal, so the bot
+keeps that terminal in tmux and types into it (bracketed paste, so a line
+break is text and not Enter). Your session is the one that answers: same id,
+nothing new in `claude agents`, and the turn is there when you attach.
+
+The reply is not scraped from the terminal. Claude Code writes every turn to
+the conversation's transcript, which this project already reads, so the answer
+comes from the file and no TUI parsing is involved.
+
+If that path cannot be taken — no tmux, the window would not open, the text
+would not go in — the message falls back to `--bg --resume` rather than being
+lost, and that fork then runs as `<name>-wpp` beside yours. A timeout is not
+one of those cases: the text was already typed, and asking you the same thing
+twice is worse than waiting.
 
 **It cleans up its own forks, and never your session.** Each turn resumes
 into a fork with a new id, so the entries it creates are swept when the turn

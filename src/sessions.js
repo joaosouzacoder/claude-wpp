@@ -22,7 +22,7 @@ export function expandir(cwd, defaultCwd) {
 // `busy` and `abort` describe the live process and mean nothing on disk.
 // `pending` and `queue` are requests you made: dropping them loses work in
 // silence, which is the one thing this daemon must never do.
-const PERSISTIDO = ['name', 'cwd', 'claudeSessionId', 'createdAt', 'lastActivityAt', 'pending', 'queue', 'adotadaDe']
+const PERSISTIDO = ['name', 'cwd', 'claudeSessionId', 'createdAt', 'lastActivityAt', 'pending', 'queue', 'adotadaDe', 'agenteId']
 
 export function createSessions({ store, defaultCwd = homedir(), now = () => new Date().toISOString() }) {
   const salvo = store.load()
@@ -97,12 +97,18 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
     // session with that name already exists on the host, pointing this entry
     // at it is what makes `@infra` mean the `infra` he opened himself, today
     // and after the next restart.
-    adotar(name, { cwd, claudeSessionId }) {
+    adotar(name, { cwd, claudeSessionId, agenteId = null }) {
       const s = api.get(name)
-      if (!s) return api.create({ cwd, name, claudeSessionId, activate: false })
+      if (!s) {
+        const nova = api.create({ cwd, name, claudeSessionId, activate: false })
+        nova.agenteId = agenteId
+        persist()
+        return nova
+      }
       if (s.claudeSessionId === claudeSessionId) return s
       s.claudeSessionId = claudeSessionId
       s.adotadaDe = claudeSessionId
+      s.agenteId = agenteId
       s.cwd = expandir(cwd, defaultCwd)
       s.lastActivityAt = now()
       persist()
