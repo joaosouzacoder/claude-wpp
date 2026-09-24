@@ -831,5 +831,11 @@ export function createHandler({ sessions, run, runAttached = null, attach = null
     return despachar(sessao, prompt)
   }
 
-  return { handle, recuperar, despacharDeFora, rodarTarefa }
+  // Something a session said on its own, with nobody waiting on a turn: it
+  // reaches him labelled like any other answer from that session.
+  async function avisarDaSessao(nome, texto) {
+    await responderTexto(nome, texto)
+  }
+
+  return { handle, recuperar, despacharDeFora, rodarTarefa, avisarDaSessao }
 }

@@ -58,3 +58,40 @@ export async function readLastReply({ cwd, sessionId, home } = {}) {
   }
   return null
 }
+
+// Everything said after `desde`, both sides, oldest first. A session speaks on
+// its own — a background agent it dispatched finishes and it reports back —
+// and that happens outside any turn this bot started, so the only way to see
+// it is to read what the conversation wrote since we last looked.
+export async function readEntries({ cwd, sessionId, home, desde = null, limiteLinhas = 400 } = {}) {
+  if (!cwd || !sessionId) return []
+  let raw
+  try {
+    raw = await readFile(transcriptPath(cwd, sessionId, { home }), 'utf8')
+  } catch {
+    return []
+  }
+
+  const linhas = raw.split('\n').filter(Boolean).slice(-limiteLinhas)
+  const entradas = []
+  for (const linha of linhas) {
+    let entrada
+    try {
+      entrada = JSON.parse(linha)
+    } catch {
+      continue
+    }
+    if (entrada.type !== 'assistant' && entrada.type !== 'user') continue
+    const timestamp = entrada.timestamp ?? null
+    if (!timestamp || (desde && timestamp <= desde)) continue
+
+    const conteudo = entrada.message?.content
+    const texto = typeof conteudo === 'string'
+      ? conteudo
+      : (conteudo ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('')
+    if (!texto.trim()) continue
+
+    entradas.push({ tipo: entrada.type, texto, timestamp })
+  }
+  return entradas
+}

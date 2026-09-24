@@ -7,6 +7,7 @@ import { createWhatsapp, aceitaDoBot } from './whatsapp.js'
 import { createApi } from './api.js'
 import { runClaude, attachClaude, listAgents, execCli } from './claude.js'
 import { createAttachedRunner } from './attached.js'
+import { createWatcher } from './watcher.js'
 import { classificadorClaude } from './intent.js'
 import { transcribe } from './transcribe.js'
 import { formatDraft, formatDirect } from './wpp.js'
@@ -21,6 +22,9 @@ import { mkdirSync } from 'node:fs'
 
 // Rewriting one short reply formally; past this, the owner is told it was not sent.
 const FORMALIZAR_TIMEOUT_MS = 3 * 60 * 1000
+// How often each session's transcript is re-read for something it said with
+// no turn of ours in flight. Reading a tail off disk, so it can be frequent.
+const VIGIA_INTERVALO_MS = 15 * 1000
 
 const log = {
   info: (m) => console.log(`[info] ${m}`),
@@ -220,6 +224,19 @@ async function main() {
     }, config.schedulerIntervalMs)
     : null
   relogioTarefas?.unref?.()
+
+  // A session finishes something it had handed to a background agent and says
+  // so minutes after the turn ended. Nobody is reading then, so that answer
+  // used to sit in the session until he asked about it again.
+  const vigia = createWatcher({
+    sessions,
+    enviar: (nome, texto) => handler.avisarDaSessao(nome, texto),
+    log,
+  })
+  const relogioVigia = setInterval(() => {
+    vigia.passar().catch((e) => log.debug?.(`[vigia] ${e.message ?? e}`))
+  }, VIGIA_INTERVALO_MS)
+  relogioVigia.unref?.()
 
   for (const sinal of ['SIGINT', 'SIGTERM']) {
     process.on(sinal, async () => {
