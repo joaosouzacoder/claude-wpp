@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, utimesSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { tmpdir, homedir } from 'node:os'
 import { createStore } from '../src/store.js'
 import { createSessions } from '../src/sessions.js'
 import { createHandler } from '../src/handler.js'
@@ -1498,7 +1498,7 @@ test('sessão do host já rastreada pelo bot não é readotada', async () => {
 
 test('duas sessões com o mesmo nome: pergunta em vez de escolher uma', async () => {
   const { handler, ditos, pedidos } = montarComWpp({
-    listAgents: async () => [noHost('infra', 'A'), { ...noHost('infra', 'B'), cwd: '/home/jgabr' }],
+    listAgents: async () => [noHost('infra', 'A'), { ...noHost('infra', 'B'), cwd: homedir() }],
   })
   const antes = pedidos.length
   await handler.handle('@infra roda os testes')
