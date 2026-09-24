@@ -22,7 +22,7 @@ export function expandir(cwd, defaultCwd) {
 // `busy` and `abort` describe the live process and mean nothing on disk.
 // `pending` and `queue` are requests you made: dropping them loses work in
 // silence, which is the one thing this daemon must never do.
-const PERSISTIDO = ['name', 'cwd', 'claudeSessionId', 'createdAt', 'lastActivityAt', 'pending', 'queue']
+const PERSISTIDO = ['name', 'cwd', 'claudeSessionId', 'createdAt', 'lastActivityAt', 'pending', 'queue', 'adotadaDe']
 
 export function createSessions({ store, defaultCwd = homedir(), now = () => new Date().toISOString() }) {
   const salvo = store.load()
@@ -75,6 +75,11 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
         name: nome,
         cwd: expandir(cwd, defaultCwd),
         claudeSessionId,
+        // Where this name came from, when it was taken over from a session he
+        // started himself. Resuming forks the conversation into a new id, so
+        // without this the next message would adopt the original all over
+        // again and fork from the same point, losing what was said in between.
+        adotadaDe: claudeSessionId,
         createdAt: now(),
         lastActivityAt: now(),
         pending: null,
@@ -97,6 +102,7 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
       if (!s) return api.create({ cwd, name, claudeSessionId, activate: false })
       if (s.claudeSessionId === claudeSessionId) return s
       s.claudeSessionId = claudeSessionId
+      s.adotadaDe = claudeSessionId
       s.cwd = expandir(cwd, defaultCwd)
       s.lastActivityAt = now()
       persist()

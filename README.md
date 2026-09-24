@@ -246,14 +246,31 @@ transcript (`~/.claude/projects/…/<session-id>.jsonl`, the same file
 `--resume` already depends on to work at all) — nothing is scraped from a
 terminal.
 
-The background agent only exists for the duration of one turn: as soon as its
-reply is read, claude-wpp stops and removes it (`claude stop` + `claude rm`),
-so it never lingers idle in `claude agents` between messages. The next message
-starts a fresh one with `--resume`, which rebuilds everything from the
-transcript regardless of whether the previous one is still around — resuming
-a session whose process has already fully exited (rather than one merely left
-idle) forks into a new conversation id, and claude-wpp follows that id from
-then on, sweeping away the one it forked from so it doesn't linger either.
+The background agent only runs for the duration of one turn: as soon as its
+reply is read, claude-wpp stops it (`claude stop`), so no process is left
+resident between messages. The next message starts a fresh one with
+`--resume`, which rebuilds everything from the transcript regardless of
+whether the previous one is still around — resuming a session whose process
+has already fully exited (rather than one merely left idle) forks into a new
+conversation id, and claude-wpp follows that id from then on.
+
+**It stops its own agent and deletes nothing.** Stopping used to be followed
+by `claude rm`, and by a sweep of every entry under the resumed conversation
+id — which meant a session you had opened yourself in `claude agents`
+vanished from your list the first time the bot answered on it. Entries stay;
+the clutter is the price of not deleting your work.
+
+### A name means your session
+
+`@name` (and the assistant's own dispatch) looks at the sessions running on
+this host before its own registry. One match and the name is pointed at it for
+good, so `@infra` keeps meaning the `infra` you opened, across restarts, and
+you are told once when it moves. Two sessions with that name, and it asks
+which folder rather than guessing; a `done` one is skipped, since resuming a
+session whose process is gone has been seen to hang. Because resuming forks
+the conversation into a new id, the origin is remembered — otherwise the next
+message would adopt the original again and fork from the same point, losing
+everything said in between.
 
 | | |
 |---|---|
