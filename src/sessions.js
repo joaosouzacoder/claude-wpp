@@ -4,6 +4,9 @@ import { resolve } from 'node:path'
 import { readLastReply } from './transcript.js'
 
 const NOME_VALIDO = /^[a-z0-9_-]{1,24}$/i
+// How many of our own prompts a session keeps, to recognise them when the
+// conversation is read back. A handful covers a chain still being worked on.
+const LEMBRAR_PROMPTS = 10
 
 export function expandir(cwd, defaultCwd) {
   const bruto = cwd?.trim() ? cwd.trim() : defaultCwd
@@ -44,6 +47,11 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
     agenteId: s.agenteId ?? null,
     busy: false,
     abort: null,
+    // What this process typed into the conversation, to tell his own requests
+    // apart from ours when reading it back. Deliberately not persisted: after
+    // a restart nothing is known to be ours, and the watcher stays quiet
+    // rather than forwarding what he asked for at his own keyboard.
+    promptsDoBot: [],
   }))
 
   let activeSession = sessions.some((s) => s.name === salvo.activeSession) ? salvo.activeSession : null
@@ -91,6 +99,7 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
         queue: [],
         busy: false,
         abort: null,
+        promptsDoBot: [],
       }
       sessions.push(sessao)
       if (activate) activeSession = nome
@@ -211,6 +220,29 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
     },
 
     interrompidas: () => sessions.filter((s) => s.pending && !s.busy),
+
+    // Reading a conversation back gives no hint of who typed what: a request
+    // that came over WhatsApp and one he typed at his own keyboard are the
+    // same kind of line. So every prompt this process types is remembered,
+    // and only a few: the point is telling apart what is happening now, not
+    // keeping a history.
+    registrarPromptDoBot(name, prompt) {
+      const s = api.get(name)
+      if (!s || !prompt?.trim()) return
+      s.promptsDoBot.push(prompt.trim())
+      if (s.promptsDoBot.length > LEMBRAR_PROMPTS) s.promptsDoBot.shift()
+    },
+
+    // Claude Code files the prompt as its own line in the transcript, so the
+    // text is what identifies it. Compared by prefix: a long request can be
+    // recorded there wrapped or trimmed, and the opening is enough to tell
+    // ours from his.
+    foiPromptDoBot(name, texto) {
+      const s = api.get(name)
+      if (!s || !texto?.trim()) return false
+      const lido = texto.trim()
+      return s.promptsDoBot.some((p) => lido === p || lido.startsWith(p.slice(0, 120)))
+    },
 
     touch(name) {
       const s = api.get(name)

@@ -339,14 +339,25 @@ listening too. But a session that handed work to a background agent says
 written then — outside any turn. Nobody was reading, so it stayed in the
 session until you asked about it again.
 
-Every session's transcript is now re-read every 15s, and anything it said on
-its own reaches you labelled like a normal reply. Two limits keep that from
-becoming noise: nothing is forwarded while a turn of ours is in flight (that
-path already delivers the reply), and an answer only counts as unprompted when
-the line before it came from the machine — a task notification or a system
-reminder. What you type in the terminal yourself is answered in the terminal,
-and is not echoed to WhatsApp. On boot the mark starts at the end of each
-conversation, so a restart never replays a backlog into your chat.
+Every session's transcript is now re-read every 15s, and an answer to a
+request **of yours that came over WhatsApp** reaches you there, labelled like
+a normal reply.
+
+Whose request it was is what decides it. A conversation read back from disk
+shows no difference between a line typed at your own keyboard and one this bot
+pasted in, so every prompt the bot types is remembered and matched when the
+transcript is read again. A chain started from your terminal is answered on
+your screen and never echoed to your phone, however long the session takes;
+typing in a session mid-chain hands it back to you and silences the rest of
+that chain. Nothing is remembered across a restart: with no way to tell whose
+request it was, the bot stays quiet rather than guessing it was its own.
+
+Two more limits keep it from repeating itself: nothing is forwarded while a
+turn of ours is in flight, since that path already delivers the reply, and an
+answer only counts as late when the line before it came from the machine — a
+task notification or a system reminder — which is what separates the
+background agent's result from the turn's own answer. On boot the mark starts
+at the end of each conversation, so a restart never replays a backlog.
 
 ### Picking up a session you started by hand
 
