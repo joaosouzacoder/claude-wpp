@@ -6,6 +6,7 @@ import { createHandler } from './handler.js'
 import { createWhatsapp, aceitaDoBot } from './whatsapp.js'
 import { createApi } from './api.js'
 import { runClaude, attachClaude, listAgents, execCli } from './claude.js'
+import { createAttachedRunner } from './attached.js'
 import { classificadorClaude } from './intent.js'
 import { transcribe } from './transcribe.js'
 import { formatDraft, formatDirect } from './wpp.js'
@@ -142,6 +143,8 @@ async function main() {
   }
 
   handler = createHandler({
+    // Answering inside a session he opened himself, by typing into it.
+    runAttached: createAttachedRunner({ bin: config.claudeBin, log }),
     classify: classificadorClaude({ bin: config.claudeBin, model: config.intentModel, cwd: dirFormal, timeoutMs: config.intentTimeoutMs }),
     log,
     sessions,

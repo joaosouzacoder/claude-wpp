@@ -626,7 +626,7 @@ test('sem chave da OpenAI o áudio avisa que falta a chave e o texto segue funci
 
 // --- conta pessoal (/wpp) ---
 
-function montarComWpp({ run, undo, classify, listAgents, formalizar = async ({ texto }) => `Prezada, ${texto}.` } = {}) {
+function montarComWpp({ run, undo, classify, listAgents, runAttached, formalizar = async ({ texto }) => `Prezada, ${texto}.` } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'handler-wpp-'))
   const db = openDb(':memory:')
   const outbox = createOutbox({ db, now: () => 1000 })
@@ -638,6 +638,7 @@ function montarComWpp({ run, undo, classify, listAgents, formalizar = async ({ t
   const handler = createHandler({
     classify,
     listAgents,
+    runAttached,
     sessions,
     run: run ?? (async ({ cwd, prompt }) => { pedidos.push({ cwd, prompt }); return { ok: true, text: 'rascunho pronto', sessionId: 'sid', error: null } }),
     transcribe: async () => ({ ok: true, text: '', error: null }),
@@ -1452,7 +1453,7 @@ test('a sessão do wpp é refeita quando as instruções do agente mudam', async
 })
 
 // A session he started himself, outside the bot, as `claude agents` lists it.
-const noHost = (nome, id, extra = {}) => ({ name: nome, sessionId: id, cwd: tmpdir(), kind: 'background', status: 'idle', ...extra })
+const noHost = (nome, id, extra = {}) => ({ name: nome, sessionId: id, id: `ag-${id}`, cwd: tmpdir(), kind: 'background', status: 'idle', ...extra })
 
 test('@nome usa a sessão que ELE abriu no host, não a homônima do bot', async () => {
   const { handler, sessions, ditos, pedidos } = montarComWpp({
@@ -1576,4 +1577,67 @@ test('numa sessão criada pelo próprio bot, nada disso se aplica', async () => 
   assert.equal(opcoes.at(-1).name, 'minha')
   assert.notEqual(opcoes.at(-1).manterEntrada, true)
   assert.deepEqual(opcoes.at(-1).preservar, [])
+})
+
+test('numa sessão dele, o turno acontece DENTRO dela, sem bifurcar', async () => {
+  const dentro = []
+  const foraDela = []
+  const { handler, ditos, sessions } = montarComWpp({
+    listAgents: async () => [noHost('infra', 'DELE-1')],
+    runAttached: async (o) => { dentro.push(o); return { ok: true, text: 'respondi na sua sessão', sessionId: o.sessionId, error: null } },
+    run: async (o) => { foraDela.push(o); return { ok: true, text: 'ok', sessionId: 'nova', error: null } },
+  })
+
+  await handler.handle('@infra roda os testes')
+
+  assert.equal(dentro.length, 1, 'foi por dentro')
+  assert.equal(dentro[0].agentId, 'ag-DELE-1', 'com o id do agente dele, que é o que o attach usa')
+  assert.equal(dentro[0].prompt, 'roda os testes')
+  assert.deepEqual(foraDela, [], 'e não disparou nada por fora')
+  assert.equal(ditos.at(-1), '[infra] respondi na sua sessão')
+  assert.equal(sessions.get('infra').claudeSessionId, 'DELE-1', 'a conversa dele continua sendo a conversa')
+})
+
+test('se não der para entrar na sessão dele, cai no caminho normal em vez de perder a mensagem', async () => {
+  const foraDela = []
+  const { handler, ditos } = montarComWpp({
+    listAgents: async () => [noHost('infra', 'DELE-1')],
+    runAttached: async () => ({ ok: false, text: '', sessionId: null, error: 'tmux não está instalado aqui', podeCair: true }),
+    run: async (o) => { foraDela.push(o); return { ok: true, text: 'fui pelo outro caminho', sessionId: 'nova', error: null } },
+  })
+
+  await handler.handle('@infra roda os testes')
+
+  assert.equal(foraDela.length, 1)
+  assert.equal(foraDela[0].prompt, 'roda os testes')
+  assert.equal(ditos.at(-1), '[infra] fui pelo outro caminho')
+})
+
+test('mas um tempo esgotado não é motivo para mandar a mesma coisa duas vezes', async () => {
+  const foraDela = []
+  const { handler, ditos } = montarComWpp({
+    listAgents: async () => [noHost('infra', 'DELE-1')],
+    runAttached: async () => ({ ok: false, text: '', sessionId: null, error: 'passei do tempo limite (60s) esperando a sessão infra', podeCair: false }),
+    run: async (o) => { foraDela.push(o); return { ok: true, text: 'nao devia', sessionId: 'x', error: null } },
+  })
+
+  await handler.handle('@infra roda os testes')
+
+  assert.deepEqual(foraDela, [], 'a mensagem já tinha sido digitada na sessão dele')
+  assert.match(ditos.at(-1), /tempo limite/)
+})
+
+test('sessão do próprio bot não usa esse caminho', async () => {
+  const dentro = []
+  const foraDela = []
+  const { handler } = montarComWpp({
+    listAgents: async () => [],
+    runAttached: async (o) => { dentro.push(o); return { ok: true, text: 'x', sessionId: 'y', error: null } },
+    run: async (o) => { foraDela.push(o); return { ok: true, text: 'ok', sessionId: 'sid', error: null } },
+  })
+  await handler.handle('/new ~ minha')
+  await handler.handle('@minha oi')
+
+  assert.deepEqual(dentro, [])
+  assert.equal(foraDela.length, 1)
 })
