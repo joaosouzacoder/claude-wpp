@@ -330,6 +330,24 @@ by writing into `~/.claude.json`, Claude Code's own global state file, shared
 by every Claude Code session on this machine. **Read
 [SECURITY.md](SECURITY.md) for what that means.**
 
+### When a session answers with nobody asking
+
+A turn ends when the session answers, and that used to be the end of the
+listening too. But a session that handed work to a background agent says
+"passei o pedido" and goes quiet; the agent finishes minutes later, a
+`<task-notification>` lands in the conversation, and the real answer is
+written then — outside any turn. Nobody was reading, so it stayed in the
+session until you asked about it again.
+
+Every session's transcript is now re-read every 15s, and anything it said on
+its own reaches you labelled like a normal reply. Two limits keep that from
+becoming noise: nothing is forwarded while a turn of ours is in flight (that
+path already delivers the reply), and an answer only counts as unprompted when
+the line before it came from the machine — a task notification or a system
+reminder. What you type in the terminal yourself is answered in the terminal,
+and is not echoed to WhatsApp. On boot the mark starts at the end of each
+conversation, so a restart never replays a backlog into your chat.
+
 ### Picking up a session you started by hand
 
 `/ls` only shows sessions this bot created. A session you started yourself —
