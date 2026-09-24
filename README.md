@@ -261,6 +261,20 @@ keeps that terminal in tmux and types into it (bracketed paste, so a line
 break is text and not Enter). Your session is the one that answers: same id,
 nothing new in `claude agents`, and the turn is there when you attach.
 
+The agent id that `attach` needs is looked up on every turn rather than read
+from state: a session is relisted under a new id after a restart, and a stale
+id sent the turn down the forking path.
+
+**A session you started in your own terminal** has no entry in `claude agents`
+and so no id to attach to. There the window opens the conversation itself with
+`--resume`, which forks it once; the new id is found by looking for the
+transcript that appeared after the window opened, and from then on that window
+is where the conversation lives, so nothing forks again. The bot says the
+window's name once — `tmux attach -t wpp-<name>` — and from that point you and
+the bot are typing into the same session instead of two beside each other.
+That window runs with permission prompts skipped, since nobody is sitting at
+it to answer them.
+
 The reply is not scraped from the terminal. Claude Code writes every turn to
 the conversation's transcript, which this project already reads, so the answer
 comes from the file and no TUI parsing is involved.
