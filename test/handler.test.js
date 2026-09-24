@@ -1530,3 +1530,22 @@ test('o despacho do Claudinei resolve o nome do mesmo jeito', async () => {
   assert.equal(r.ok, true)
   assert.equal(sessions.get('infra').claudeSessionId, 'DELE-1')
 })
+
+test('retomar bifurca a conversa, e o nome não volta a adotar a original', async () => {
+  // Claude Code files a resumed conversation under a brand-new id. Without
+  // remembering where the name came from, the next message would adopt the
+  // original again and fork from the same point, losing the exchange between.
+  const { handler, sessions, ditos } = montarComWpp({
+    listAgents: async () => [noHost('infra', 'DELE-1')],
+    run: async () => ({ ok: true, text: 'ok', sessionId: 'BIFURCADA', error: null }),
+  })
+
+  await handler.handle('@infra oi')
+  assert.equal(sessions.get('infra').claudeSessionId, 'BIFURCADA', 'o claude bifurcou')
+  assert.equal(sessions.get('infra').adotadaDe, 'DELE-1', 'mas lembramos de onde veio')
+
+  ditos.length = 0
+  await handler.handle('@infra e aí')
+  assert.equal(sessions.get('infra').claudeSessionId, 'BIFURCADA', 'seguiu na mesma conversa')
+  assert.ok(!ditos.some((t) => /passei a usar/.test(t)))
+})

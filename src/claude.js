@@ -216,32 +216,20 @@ export function createClaude({
     const pararSessao = () => (bgId ? runCli(bin, ['stop', bgId], { timeoutMs: STOP_TIMEOUT_MS }).catch(() => {}) : null)
     const pararERemover = async (id) => {
       await runCli(bin, ['stop', id], { timeoutMs: STOP_TIMEOUT_MS }).catch(() => {})
-      await runCli(bin, ['rm', id], { timeoutMs: STOP_TIMEOUT_MS }).catch(() => {})
     }
     // The background agent has no reason to stay resident once its turn is
     // over: the next message dispatches a fresh `--bg --resume`, which
     // reconstructs everything from the transcript regardless of whether this
-    // one is still around. Leaving it running only holds a process open
-    // forever and clutters `claude agents` with sessions that already
-    // answered — which is what `/end` used to leave behind on an idle
-    // session, since there was nothing in flight left to abort.
+    // one is still around, and leaving it running holds a process open for
+    // nothing. So the turn ends with `stop`.
     //
-    // A session picked up with /importar (or one that predates this cleanup)
-    // can already have its own finished-but-not-removed entry sitting under
-    // the same name from before this bot ever dispatched anything. Resuming
-    // a session that has genuinely exited (not just gone idle) does not
-    // reuse its id: claude forks the conversation into a brand-new sessionId
-    // and copies the history forward, so sessionIdCompleto can end up
-    // different from the sessionId this run was asked to resume — leaving
-    // the one it forked *from* permanently orphaned if only the current id
-    // is ever swept. Sweep stale entries under either.
+    // It ends there. This used to also `rm` the entry, and to sweep every
+    // listing under the id it resumed — which is how a session the owner had
+    // opened himself disappeared from `claude agents` the moment the bot
+    // answered on it once. What the bot stops is its own agent; what it
+    // never does is delete a conversation from his list.
     const limparSessao = async () => {
       if (bgId) await pararERemover(bgId)
-      const alvos = new Set([sessionIdCompleto, sessionId].filter(Boolean))
-      if (!alvos.size) return
-      const lista = await listAgents(bin).catch(() => null)
-      const orfas = lista?.filter((s) => alvos.has(s.sessionId) && s.id && s.id !== bgId && s.status !== 'busy') ?? []
-      for (const orfa of orfas) await pararERemover(orfa.id)
     }
 
     const aoAbortar = () => { pararSessao() }
