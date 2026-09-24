@@ -595,13 +595,59 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
     return despachar(sessao, `${cabecalho}\n\n${prompt}`)
   }
 
+  // A session on this host that he started himself, with that name. Sessions
+  // the bot already tracks are skipped, and a `done` one is left alone: its
+  // process is gone and resuming it has been seen to hang.
+  async function doHost(nome) {
+    if (!listAgents) return []
+    const todas = await listAgents(config.claudeBin).catch(() => null)
+    if (!todas) return []
+    const minhas = new Set(sessions.list().map((s) => s.claudeSessionId).filter(Boolean))
+    return todas.filter((a) => a.sessionId
+      && !minhas.has(a.sessionId)
+      && nomeSugerido(a.name) === nome
+      && (a.status ? a.status !== 'done' : a.state !== 'done'))
+  }
+
+  // `@infra` means the `infra` he is looking at, not a namesake the bot
+  // happens to have created. If one exists on the host, the name is pointed
+  // at it — once, and it stays pointed there.
+  async function sessaoChamada(nome) {
+    const candidatas = await doHost(nome)
+    if (candidatas.length > 1) {
+      return { erro: [`Tem mais de uma sessão chamada ${nome} aberta neste host:`,
+        ...candidatas.map((c) => `- ${c.cwd}`),
+        'Renomeia uma delas, ou me diz a pasta.'].join('\n') }
+    }
+    if (candidatas.length === 1) {
+      const alvo = candidatas[0]
+      // The id has to be read before adopting: `adotar` mutates the very
+      // object `get` returns, so comparing afterwards always says "unchanged".
+      const registrada = sessions.get(nome)
+      const idAntes = registrada?.claudeSessionId ?? null
+      const sessao = sessions.adotar(nome, { cwd: alvo.cwd, claudeSessionId: alvo.sessionId })
+      const adotada = idAntes !== alvo.sessionId
+      return { sessao, adotada }
+    }
+    const sessao = sessions.get(nome)
+    return sessao ? { sessao } : { erro: `Não achei a sessão ${nome}. Manda /ls.` }
+  }
+
   // The butler handing work to a project session, through the API. Same path
   // as a typed `@sessão`, so the reply reaches him labelled with that name.
-  function despacharDeFora({ session, prompt, cwd }) {
-    let sessao = session ? sessions.get(session) : sessions.active()
-    if (session && !sessao) {
-      if (!cwd) return { ok: false, error: `não existe sessão "${session}"; passe cwd para eu criar` }
-      sessao = null
+  async function despacharDeFora({ session, prompt, cwd }) {
+    let sessao = null
+    if (session) {
+      // Same resolution as `@nome`: the session he opened himself wins over a
+      // namesake of the bot's own.
+      const r = await sessaoChamada(session)
+      if (r.erro) {
+        if (!cwd) return { ok: false, error: typeof r.erro === 'string' ? r.erro : r.erro.split('\n')[0] }
+      } else {
+        sessao = r.sessao
+      }
+    } else {
+      sessao = sessions.active()
     }
     if (sessao?.name === SESSAO_WPP) return { ok: false, error: 'essa é a sua própria sessão; despache para uma sessão de projeto' }
 
@@ -703,8 +749,10 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
     // so plain text keeps going to the active session as it always did.
     let sessao
     if (cmd.target) {
-      sessao = sessions.get(cmd.target)
-      if (!sessao) return reply(`Não achei a sessão ${cmd.target}. Manda /ls.`)
+      const r = await sessaoChamada(cmd.target)
+      if (r.erro) return reply(r.erro)
+      sessao = r.sessao
+      if (r.adotada) await reply(`(passei a usar a sua sessão ${sessao.name} de ${sessao.cwd})`)
     } else {
       try {
         sessao = wpp ? await sessaoDoMordomo() : (sessions.active() ?? await sessions.create({ cwd: config.defaultCwd }))

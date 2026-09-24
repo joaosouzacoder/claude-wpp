@@ -397,7 +397,7 @@ export function createApi({
       const sessao = String(corpo?.session ?? '').trim()
       if (!prompt) return json(res, 400, { ok: false, error: 'prompt é obrigatório' })
 
-      const r = onDispatch({ session: sessao || null, prompt, cwd: String(corpo?.cwd ?? '').trim() || null })
+      const r = await onDispatch({ session: sessao || null, prompt, cwd: String(corpo?.cwd ?? '').trim() || null })
       if (!r.ok) return json(res, 400, { ok: false, error: r.error })
       // The session answers on WhatsApp on its own clock, labelled with its
       // name; holding this connection open for a build would only time out.
