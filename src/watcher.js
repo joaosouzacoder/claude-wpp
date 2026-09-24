@@ -84,7 +84,11 @@ export function createWatcher({
       for (const sessao of sessions.list()) {
         try {
           const texto = await olhar(sessao)
-          if (texto) await enviar(sessao.name, texto)
+          if (!texto) continue
+          // Worth a line in the journal: this is the bot speaking with nobody
+          // having asked, and the only way to tell it apart from a turn.
+          log?.info?.(`[vigia ${sessao.name}] encaminhei ${texto.length} caractere(s) que a sessão disse sozinha`)
+          await enviar(sessao.name, texto)
         } catch (err) {
           log?.debug?.(`[watcher ${sessao.name}] ${err.message ?? err}`)
         }
