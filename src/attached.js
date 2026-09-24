@@ -142,13 +142,14 @@ export function createAttachedRunner({
       abriu = true
       await sleep(ESPERA_ATTACH_MS)
 
+      // `--resume` on a conversation whose process is gone continues in the
+      // same transcript, and that is the good case: the turn lands in his
+      // file. It only forks when the session is still hosted, and then a new
+      // transcript shows up right after the window opened — that one is where
+      // the conversation went, so the reply is read from there instead.
       if (!agentId) {
         const nova = await descobrir({ cwd, anterior: sessionId, desde }).catch(() => null)
-        if (!nova) {
-          await tmux.matar(janela)
-          return falha('abri a conversa dele mas não achei onde ela continuou', true)
-        }
-        alvo = nova
+        if (nova) alvo = nova
       }
     }
 

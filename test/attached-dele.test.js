@@ -45,20 +45,27 @@ test('sem id de agente: abre a conversa dele e acha onde ela continuou', async (
     ['abrir', 'wpp-infra', 'claude --resume sid-dele --dangerously-skip-permissions', '/tmp'])
 })
 
-test('não achar a conversa nova fecha a janela e deixa cair para a via normal', async () => {
+test('sem transcrição nova, a conversa continuou no mesmo arquivo: é nele que a resposta é lida', async () => {
   const { tmux, chamadas } = tmuxFalso()
+  const lidos = []
   const runAttached = createAttachedRunner({
     tmux,
+    // `--resume` numa conversa cujo processo já morreu continua no mesmo id;
+    // não achar arquivo novo é o caso bom, não uma falha.
     descobrir: async () => null,
-    readReply: async () => null,
+    readReply: async ({ sessionId }) => {
+      lidos.push(sessionId)
+      return lidos.length > 1 ? { content: 'dentro', timestamp: '7' } : null
+    },
+    now: (() => { let t = 0; return () => (t += 7000) })(),
     sleep: async () => {},
   })
 
   const r = await runAttached({ ...base })
-  assert.equal(r.ok, false)
-  assert.equal(r.podeCair, true, 'a mensagem não chegou nela: ainda dá para ir pela via antiga')
-  assert.match(r.error, /não achei onde ela continuou/)
-  assert.ok(chamadas.some((c) => c[0] === 'matar'))
+  assert.equal(r.ok, true)
+  assert.equal(r.sessionId, 'sid-dele', 'segue sendo a conversa dele')
+  assert.ok(lidos.every((id) => id === 'sid-dele'))
+  assert.ok(!chamadas.some((c) => c[0] === 'matar'), 'e a janela não é fechada')
 })
 
 test('janela já viva não reabre nem procura conversa nova', async () => {
