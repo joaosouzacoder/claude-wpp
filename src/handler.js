@@ -602,7 +602,7 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
     if (!listAgents) return []
     const todas = await listAgents(config.claudeBin).catch(() => null)
     if (!todas) return []
-    const minhas = new Set(sessions.list().map((s) => s.claudeSessionId).filter(Boolean))
+    const minhas = new Set(sessions.list().flatMap((s) => [s.claudeSessionId, s.adotadaDe]).filter(Boolean))
     return todas.filter((a) => a.sessionId
       && !minhas.has(a.sessionId)
       && nomeSugerido(a.name) === nome
