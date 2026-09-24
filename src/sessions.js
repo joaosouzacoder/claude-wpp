@@ -88,6 +88,21 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
       return sessao
     },
 
+    // The name he uses is the name of a conversation, not of a row here: if a
+    // session with that name already exists on the host, pointing this entry
+    // at it is what makes `@infra` mean the `infra` he opened himself, today
+    // and after the next restart.
+    adotar(name, { cwd, claudeSessionId }) {
+      const s = api.get(name)
+      if (!s) return api.create({ cwd, name, claudeSessionId, activate: false })
+      if (s.claudeSessionId === claudeSessionId) return s
+      s.claudeSessionId = claudeSessionId
+      s.cwd = expandir(cwd, defaultCwd)
+      s.lastActivityAt = now()
+      persist()
+      return s
+    },
+
     setActive(name) {
       if (!api.get(name)) return false
       activeSession = name

@@ -626,7 +626,7 @@ test('sem chave da OpenAI o áudio avisa que falta a chave e o texto segue funci
 
 // --- conta pessoal (/wpp) ---
 
-function montarComWpp({ run, undo, classify, formalizar = async ({ texto }) => `Prezada, ${texto}.` } = {}) {
+function montarComWpp({ run, undo, classify, listAgents, formalizar = async ({ texto }) => `Prezada, ${texto}.` } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'handler-wpp-'))
   const db = openDb(':memory:')
   const outbox = createOutbox({ db, now: () => 1000 })
@@ -637,6 +637,7 @@ function montarComWpp({ run, undo, classify, formalizar = async ({ texto }) => `
   const sessions = createSessions({ store: createStore(join(dir, 'state.json')), defaultCwd: dir })
   const handler = createHandler({
     classify,
+    listAgents,
     sessions,
     run: run ?? (async ({ cwd, prompt }) => { pedidos.push({ cwd, prompt }); return { ok: true, text: 'rascunho pronto', sessionId: 'sid', error: null } }),
     transcribe: async () => ({ ok: true, text: '', error: null }),
@@ -1419,13 +1420,13 @@ test('o Claudinei despacha trabalho para uma sessão de projeto, e nunca para si
   await handler.handle('/new ~ infra')
   await handler.handle('oi')  // cria a sessão do Claudinei
 
-  const r = handler.despacharDeFora({ session: 'infra', prompt: 'roda os testes' })
+  const r = await handler.despacharDeFora({ session: 'infra', prompt: 'roda os testes' })
   assert.deepEqual(r, { ok: true, session: 'infra' })
   await new Promise((ok) => setTimeout(ok, 50))
   assert.equal(pedidos.at(-1).prompt, 'roda os testes')
 
-  assert.equal(handler.despacharDeFora({ session: 'wpp', prompt: 'x' }).ok, false)
-  assert.match(handler.despacharDeFora({ session: 'não-existe', prompt: 'x' }).error, /passe cwd/)
+  assert.equal((await handler.despacharDeFora({ session: 'wpp', prompt: 'x' })).ok, false)
+  assert.match((await handler.despacharDeFora({ session: 'nao-existe', prompt: 'x' })).error, /Não achei a sessão/)
   void sessions
 })
 
@@ -1448,4 +1449,84 @@ test('a sessão do wpp é refeita quando as instruções do agente mudam', async
   utimesSync(join(dir, 'CLAUDE.md'), daquiAPouco, daquiAPouco)
   await handler.handle('/wpp segunda')
   assert.notEqual(sessions.get('wpp').createdAt, antes, 'devia ter recriado a sessão')
+})
+
+// A session he started himself, outside the bot, as `claude agents` lists it.
+const noHost = (nome, id, extra = {}) => ({ name: nome, sessionId: id, cwd: tmpdir(), kind: 'background', status: 'idle', ...extra })
+
+test('@nome usa a sessão que ELE abriu no host, não a homônima do bot', async () => {
+  const { handler, sessions, ditos, pedidos } = montarComWpp({
+    listAgents: async () => [noHost('infra', 'DELE-1')],
+    run: async ({ sessionId }) => ({ ok: true, text: 'ok', sessionId: sessionId ?? 'novo', error: null }),
+  })
+  await handler.handle('/new ~ infra')
+  sessions.get('infra').claudeSessionId = 'DO-BOT'
+
+  await handler.handle('@infra roda os testes')
+
+  assert.equal(sessions.get('infra').claudeSessionId, 'DELE-1', 'o nome passou a apontar para a dele')
+  assert.equal(sessions.get('infra').cwd, tmpdir())
+  assert.ok(ditos.some((t) => /passei a usar a sua sessão infra/.test(t)))
+  assert.equal(ditos.at(-1), '[infra] ok', 'e o pedido foi para ela')
+  void pedidos
+})
+
+test('e continua apontada para ela, sem repetir o aviso', async () => {
+  const { handler, sessions, ditos } = montarComWpp({
+    listAgents: async () => [noHost('infra', 'DELE-1')],
+    run: async ({ sessionId }) => ({ ok: true, text: 'ok', sessionId: sessionId ?? 'novo', error: null }),
+  })
+  await handler.handle('@infra oi')
+  const avisos = ditos.filter((t) => /passei a usar/.test(t)).length
+  await handler.handle('@infra de novo')
+
+  assert.equal(sessions.get('infra').claudeSessionId, 'DELE-1')
+  assert.equal(ditos.filter((t) => /passei a usar/.test(t)).length, avisos, 'avisou uma vez só')
+})
+
+test('sessão do host já rastreada pelo bot não é readotada', async () => {
+  const { handler, sessions, ditos } = montarComWpp({
+    listAgents: async () => [noHost('infra', 'DELE-1')],
+    run: async ({ sessionId }) => ({ ok: true, text: 'ok', sessionId: sessionId ?? 'novo', error: null }),
+  })
+  await handler.handle('@infra oi')
+  ditos.length = 0
+  await handler.handle('@infra e aí')
+  assert.equal(sessions.get('infra').claudeSessionId, 'DELE-1')
+  assert.ok(!ditos.some((t) => /passei a usar/.test(t)))
+})
+
+test('duas sessões com o mesmo nome: pergunta em vez de escolher uma', async () => {
+  const { handler, ditos, pedidos } = montarComWpp({
+    listAgents: async () => [noHost('infra', 'A'), { ...noHost('infra', 'B'), cwd: '/home/jgabr' }],
+  })
+  const antes = pedidos.length
+  await handler.handle('@infra roda os testes')
+
+  assert.match(ditos.at(-1), /mais de uma sessão chamada infra/)
+  assert.match(ditos.at(-1), new RegExp(tmpdir()))
+  assert.equal(pedidos.length, antes, 'e não despachou para nenhuma')
+})
+
+test('sessão do host encerrada é ignorada; vale a do bot', async () => {
+  const { handler, sessions, ditos } = montarComWpp({
+    listAgents: async () => [noHost('infra', 'MORTA', { status: undefined, state: 'done' })],
+    run: async ({ sessionId }) => ({ ok: true, text: 'ok', sessionId: sessionId ?? 'novo', error: null }),
+  })
+  await handler.handle('/new ~ infra')
+  sessions.get('infra').claudeSessionId = 'DO-BOT'
+  await handler.handle('@infra oi')
+
+  assert.equal(sessions.get('infra').claudeSessionId, 'DO-BOT')
+  assert.equal(ditos.at(-1), '[infra] ok')
+})
+
+test('o despacho do Claudinei resolve o nome do mesmo jeito', async () => {
+  const { handler, sessions } = montarComWpp({ listAgents: async () => [noHost('infra', 'DELE-1')] })
+  await handler.handle('/new ~ infra')
+  sessions.get('infra').claudeSessionId = 'DO-BOT'
+
+  const r = await handler.despacharDeFora({ session: 'infra', prompt: 'sobe o risk-manager' })
+  assert.equal(r.ok, true)
+  assert.equal(sessions.get('infra').claudeSessionId, 'DELE-1')
 })
