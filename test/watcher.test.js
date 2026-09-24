@@ -7,7 +7,7 @@ const em = (segundos) => new Date(T0 + segundos * 1000).toISOString()
 
 function montar({ entradas = [], sessao = {}, agora = T0 + 600000 } = {}) {
   const enviados = []
-  const sessoes = [{ name: 'infra', cwd: '/home/jgabr', claudeSessionId: 'sid', busy: false, ...sessao }]
+  const sessoes = [{ name: 'infra', cwd: '/home/user', claudeSessionId: 'sid', busy: false, ...sessao }]
   const watcher = createWatcher({
     sessions: { list: () => sessoes },
     enviar: async (nome, texto) => { enviados.push([nome, texto]) },
