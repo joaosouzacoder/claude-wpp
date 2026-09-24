@@ -117,6 +117,8 @@ export function createClaude({
     appendSystemPrompt = null,
     // Conversation ids that are his, not ours: never stopped, never removed.
     preservar = [],
+    // Leave this turn's agent listed in `claude agents` instead of removing it.
+    manterEntrada = false,
     onSlow,
     onNotice,
     onDispatch,
@@ -166,7 +168,7 @@ export function createClaude({
       return { bgId, enviadoEm }
     }
 
-    return acompanhar({ bin, name, cwd, sessionId, slowNoticeMs, heartbeatMs, timeoutMs, blockedTimeoutMs, preservar, onSlow, onNotice, onDispatch, signal, disparar })
+    return acompanhar({ bin, name, cwd, sessionId, slowNoticeMs, heartbeatMs, timeoutMs, blockedTimeoutMs, preservar, manterEntrada, onSlow, onNotice, onDispatch, signal, disparar })
   }
 
   // Picks a turn back up after this process restarted mid-run. The background
@@ -198,7 +200,7 @@ export function createClaude({
   }
 
   async function acompanhar({
-    bin, name, cwd, sessionId, slowNoticeMs, heartbeatMs, timeoutMs, blockedTimeoutMs, preservar = [], onSlow, onNotice, onDispatch, signal, disparar,
+    bin, name, cwd, sessionId, slowNoticeMs, heartbeatMs, timeoutMs, blockedTimeoutMs, preservar = [], manterEntrada = false, onSlow, onNotice, onDispatch, signal, disparar,
     comecou = now(),
   }) {
     let finalizado = false
@@ -238,7 +240,14 @@ export function createClaude({
     // removed, however the sweep finds it.
     const intocavel = new Set([preservar].flat().filter(Boolean))
     const limparSessao = async () => {
-      if (bgId) await pararERemover(bgId)
+      // `manterEntrada` keeps this turn's agent in `claude agents` after it
+      // is stopped. It is for a conversation taken over from him: the CLI has
+      // no way to write into a live agent, so every turn necessarily forks,
+      // and sweeping the fork too meant the bot's side of his session was
+      // nowhere to be seen — a listing that appeared mid-turn and vanished.
+      // One entry stays, and the previous one is swept below, so it does not
+      // pile up.
+      if (bgId) await (manterEntrada ? parar(bgId) : pararERemover(bgId))
       const alvos = new Set([sessionIdCompleto, sessionId].filter((id) => id && !intocavel.has(id)))
       if (!alvos.size) return
       const lista = await listAgents(bin).catch(() => null)

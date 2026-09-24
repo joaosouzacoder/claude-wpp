@@ -188,6 +188,10 @@ export function createHandler({ sessions, run, attach = null, transcribe, reply,
       // The conversation he opened himself, when this name was taken over
       // from one: the sweep may tidy up our own forks, never his session.
       preservar: sessao.adotadaDe ? [sessao.adotadaDe] : [],
+      // On a conversation of his, the bot's side of it stays listed under a
+      // name of its own — `infra-wpp` next to his `infra` — so it is clear
+      // where the answers are happening, and he can `claude attach` it.
+      ...(sessao.adotadaDe ? { name: `${sessao.name}-wpp`, manterEntrada: true } : {}),
     }))
   }
 

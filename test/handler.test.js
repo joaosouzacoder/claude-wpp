@@ -1549,3 +1549,31 @@ test('retomar bifurca a conversa, e o nome não volta a adotar a original', asyn
   assert.equal(sessions.get('infra').claudeSessionId, 'BIFURCADA', 'seguiu na mesma conversa')
   assert.ok(!ditos.some((t) => /passei a usar/.test(t)))
 })
+
+test('numa sessão dele, o agente do bot roda com nome próprio e fica listado', async () => {
+  const opcoes = []
+  const { handler, sessions } = montarComWpp({
+    listAgents: async () => [noHost('infra', 'DELE-1')],
+    run: async (o) => { opcoes.push(o); return { ok: true, text: 'ok', sessionId: o.sessionId ?? 'novo', error: null } },
+  })
+  await handler.handle('@infra oi')
+
+  assert.equal(opcoes.at(-1).name, 'infra-wpp', 'o agente do bot não usa o nome da sessão dele')
+  assert.equal(opcoes.at(-1).manterEntrada, true)
+  assert.deepEqual(opcoes.at(-1).preservar, ['DELE-1'])
+  assert.equal(sessions.get('infra').adotadaDe, 'DELE-1')
+})
+
+test('numa sessão criada pelo próprio bot, nada disso se aplica', async () => {
+  const opcoes = []
+  const { handler } = montarComWpp({
+    listAgents: async () => [],
+    run: async (o) => { opcoes.push(o); return { ok: true, text: 'ok', sessionId: 'sid', error: null } },
+  })
+  await handler.handle('/new ~ minha')
+  await handler.handle('@minha oi')
+
+  assert.equal(opcoes.at(-1).name, 'minha')
+  assert.notEqual(opcoes.at(-1).manterEntrada, true)
+  assert.deepEqual(opcoes.at(-1).preservar, [])
+})

@@ -254,6 +254,14 @@ whether the previous one is still around — resuming a session whose process
 has already fully exited (rather than one merely left idle) forks into a new
 conversation id, and claude-wpp follows that id from then on.
 
+There is no way to write into a live agent from the CLI (`claude` has
+`attach`, `logs`, `stop`, `rm`, `respawn` — nothing that sends a turn), so
+every message necessarily resumes into a fork. On a conversation of yours,
+that fork runs under a name of its own — `infra-wpp` beside your `infra` —
+and **stays listed** after the turn, so the bot's side of the conversation is
+somewhere you can see and `claude attach`. Only one: the previous one is
+swept when the next message arrives.
+
 **It cleans up its own forks, and never your session.** Each turn resumes
 into a fork with a new id, so the entries it creates are swept when the turn
 ends — otherwise a new `infra` would appear in `claude agents` after every

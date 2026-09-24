@@ -693,3 +693,51 @@ test('agente ainda subindo (state working sem busy) não é tratado como termina
   const r = await claude.run({ ...base })
   assert.deepEqual(r, { ok: true, text: 'um homem com uma cobra', sessionId: 'sid-1', error: null })
 })
+
+// O CLI não tem como escrever dentro de um agente vivo: todo turno bifurca.
+// Numa conversa dele, a bifurcação fica listada (é onde as respostas estão
+// acontecendo, e ele pode dar attach), mas só a mais recente — a do turno
+// anterior vai embora junto.
+test('numa conversa dele, a bifurcação deste turno fica listada e a anterior é varrida', async () => {
+  const paradas = []
+  const removidas = []
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: {
+        code: 0,
+        stdout: JSON.stringify([
+          { id: 'id-dele', sessionId: 'sid-dele', status: 'idle' },
+          { id: 'bifurcacao-anterior', sessionId: 'sid-anterior', status: 'idle' },
+          { id: 'abc12345', sessionId: 'sid-nova', status: 'idle' },
+        ]),
+      },
+      stop: (args) => { paradas.push(args[1]); return { code: 0 } },
+      rm: (args) => { removidas.push(args[1]); return { code: 0 } },
+    },
+    readReply: () => ({ content: 'pronto', timestamp: new Date(2_000_000).toISOString() }),
+  })
+
+  const r = await claude.run({ ...base, sessionId: 'sid-anterior', preservar: ['sid-dele'], manterEntrada: true })
+
+  assert.equal(r.ok, true)
+  assert.ok(paradas.includes('abc12345'), 'o processo desta bifurcação é solto')
+  assert.ok(!removidas.includes('abc12345'), 'mas a entrada dela fica na lista')
+  assert.ok(removidas.includes('bifurcacao-anterior'), 'e a bifurcação anterior sai')
+  assert.ok(!removidas.includes('id-dele'), 'a sessão dele nunca sai')
+  assert.ok(!paradas.includes('id-dele'))
+})
+
+test('numa sessão do próprio bot, nada fica pendurado', async () => {
+  const removidas = []
+  const { claude } = montar({
+    respostas: {
+      '--bg': { code: 0, stdout: BG_OUT('abc12345') },
+      agents: { code: 0, stdout: JSON.stringify([{ id: 'abc12345', sessionId: 'sid-1', status: 'idle' }]) },
+      rm: (args) => { removidas.push(args[1]); return { code: 0 } },
+    },
+    readReply: () => ({ content: 'pronto', timestamp: new Date(2_000_000).toISOString() }),
+  })
+  await claude.run({ ...base, sessionId: 'sid-1' })
+  assert.deepEqual(removidas, ['abc12345'])
+})
