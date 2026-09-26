@@ -6,8 +6,9 @@ function duracao(segundos) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-// Media is never downloaded — a placeholder keeps the conversation readable
-// without putting other people's files on this disk.
+// Every kind is recorded as a readable placeholder, so a conversation reads
+// the same whether or not the file itself was kept: `record` takes the saved
+// path separately (see `mediaKinds` in whatsapp.js).
 const TIPOS = [
   ['imageMessage', 'image', (m) => ['[imagem]', m.caption].filter(Boolean).join(' ')],
   ['videoMessage', 'video', (m) => [`[vídeo ${duracao(m.seconds)}]`, m.caption].filter(Boolean).join(' ')],
@@ -93,8 +94,8 @@ export function createCapture({ db, now = () => Math.floor(Date.now() / 1000) })
 
   const inserirMsg = db.prepare(`
     INSERT OR IGNORE INTO messages
-      (wa_id, chat_jid, sender_jid, sender_name, from_me, ts, kind, body, quoted_wa_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (wa_id, chat_jid, sender_jid, sender_name, from_me, ts, kind, body, quoted_wa_id, media_path)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
 
   return {
@@ -103,13 +104,19 @@ export function createCapture({ db, now = () => Math.floor(Date.now() / 1000) })
       upsertChat.run(jid, name ?? null, kind ?? (jid.endsWith('@g.us') ? 'group' : 'dm'), now())
     },
 
-    record(msg) {
+    // `mediaPath` is where the file was written, when it was kept at all: a
+    // file too large, a kind not downloaded, and history replayed from the
+    // phone all record the message with no path. The row outlives the file,
+    // which is pruned at 30 days, so a path here is not a promise that the
+    // file is still there.
+    record(msg, { mediaPath = null } = {}) {
       const r = normalize(msg)
       if (!r) return false
 
       upsertChat.run(r.chatJid, null, r.chatKind, now())
       const { changes } = inserirMsg.run(
         r.waId, r.chatJid, r.senderJid, r.senderName, r.fromMe, r.ts, r.kind, r.body, r.quotedWaId,
+        mediaPath,
       )
       return changes > 0
     },

@@ -15,9 +15,14 @@ const EXTENSOES = {
   'audio/aac': 'm4a',
   'audio/wav': 'wav',
   'audio/x-wav': 'wav',
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'video/3gpp': '3gp',
+  'video/webm': 'webm',
+  'video/x-matroska': 'mkv',
 }
 
-const PADRAO_POR_TIPO = { image: 'jpg', audio: 'ogg' }
+const PADRAO_POR_TIPO = { image: 'jpg', audio: 'ogg', video: 'mp4' }
 
 const PEDIDO_PADRAO = 'Analise a imagem anexada.'
 const PEDIDO_ARQUIVO_PADRAO = 'Analise o arquivo anexado.'
@@ -74,12 +79,12 @@ export function promptComArquivo(legenda, caminho, nomeOriginal) {
   return `${texto}\n\n[arquivo anexado${nome} em ${caminho} — leia o arquivo para responder]`
 }
 
-// Images are kept on disk on purpose — so Claude can revisit one from earlier
-// in the same conversation — unlike audio, which is deleted right after
-// transcription (see README). That intentional retention has no expiry of
-// its own, so left alone it grows without bound. This is the automatic half
-// of "prune that directory if it grows": anything older than maxAgeMs goes,
-// on every boot, regardless of kind.
+// Two directories are kept on purpose and neither expires on its own: the
+// bot's, so Claude can revisit a file from earlier in the same conversation
+// (audio excepted — it is deleted right after transcription, see README), and
+// the personal account's archive of what people send. Left alone both grow
+// without bound. Anything older than maxAgeMs goes, regardless of kind; the
+// caller decides how often this runs.
 export function limparMediaAntiga({ dir, maxAgeMs, now = () => Date.now() }) {
   let arquivos
   try {

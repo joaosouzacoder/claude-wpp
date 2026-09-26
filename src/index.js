@@ -25,6 +25,9 @@ const FORMALIZAR_TIMEOUT_MS = 3 * 60 * 1000
 // How often each session's transcript is re-read for something it said with
 // no turn of ours in flight. Reading a tail off disk, so it can be frequent.
 const VIGIA_INTERVALO_MS = 15 * 1000
+// How often the media directories are swept. Files age out at
+// config.mediaMaxAgeMs; this only decides how late a file can be to leave.
+const VARREDURA_MIDIA_MS = 6 * 60 * 60 * 1000
 
 const log = {
   info: (m) => console.log(`[info] ${m}`),
@@ -36,8 +39,16 @@ const log = {
 async function main() {
   const config = loadConfig({ log })
 
-  const mediaRemovida = limparMediaAntiga({ dir: config.mediaDir, maxAgeMs: config.mediaMaxAgeMs })
-  if (mediaRemovida) log.info(`${mediaRemovida} arquivo(s) de mídia antigo(s) removido(s) de ${config.mediaDir}.`)
+  // Retention has to hold on a process that stays up for weeks, so the sweep
+  // runs on a clock and not only here. Both directories age out together.
+  const pastasDeMidia = [config.mediaDir, config.personalMediaDir]
+  const varrerMidia = () => {
+    for (const dir of pastasDeMidia) {
+      const removidos = limparMediaAntiga({ dir, maxAgeMs: config.mediaMaxAgeMs })
+      if (removidos) log.info(`${removidos} arquivo(s) de mídia com mais de ${Math.round(config.mediaMaxAgeMs / 86400000)} dia(s) removido(s) de ${dir}.`)
+    }
+  }
+  varrerMidia()
 
   const sessions = createSessions({ store: createStore(join(config.stateDir, 'state.json')), defaultCwd: config.defaultCwd })
   const run = runClaude
@@ -233,6 +244,9 @@ async function main() {
     enviar: (nome, texto) => handler.avisarDaSessao(nome, texto),
     log,
   })
+  const relogioMidia = setInterval(varrerMidia, VARREDURA_MIDIA_MS)
+  relogioMidia.unref?.()
+
   const relogioVigia = setInterval(() => {
     vigia.passar().catch((e) => log.debug?.(`[vigia] ${e.message ?? e}`))
   }, VIGIA_INTERVALO_MS)

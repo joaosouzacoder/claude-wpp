@@ -15,16 +15,36 @@ const loggerMudo = {
   child() { return loggerMudo },
 }
 
+// protobuf Long or number, depending on how Baileys decoded it. Zero means the
+// sender did not say, which is not the same as "empty" — a size of 0 cannot be
+// held against a limit.
+function tamanho(m) {
+  return Number(m?.fileLength?.toString?.() ?? m?.fileLength ?? 0) || 0
+}
+
 // Separates what can be decided without touching the network from the download.
 export function classificar(msg) {
   const m = msg?.message
   if (!m) return { kind: 'text', text: '', mimetype: null }
 
   if (m.imageMessage) {
-    return { kind: 'image', text: m.imageMessage.caption ?? '', mimetype: m.imageMessage.mimetype ?? null }
+    return {
+      kind: 'image',
+      text: m.imageMessage.caption ?? '',
+      mimetype: m.imageMessage.mimetype ?? null,
+      size: tamanho(m.imageMessage),
+    }
   }
   if (m.audioMessage) {
-    return { kind: 'audio', text: '', mimetype: m.audioMessage.mimetype ?? null }
+    return { kind: 'audio', text: '', mimetype: m.audioMessage.mimetype ?? null, size: tamanho(m.audioMessage) }
+  }
+  if (m.videoMessage) {
+    return {
+      kind: 'video',
+      text: m.videoMessage.caption ?? '',
+      mimetype: m.videoMessage.mimetype ?? null,
+      size: tamanho(m.videoMessage),
+    }
   }
   // A document sent with a caption arrives wrapped one level deeper.
   const doc = m.documentMessage ?? m.documentWithCaptionMessage?.message?.documentMessage
@@ -34,14 +54,13 @@ export function classificar(msg) {
       text: doc.caption ?? '',
       mimetype: doc.mimetype ?? null,
       fileName: doc.fileName ?? null,
-      // protobuf Long or number, depending on how Baileys decoded it.
-      size: Number(doc.fileLength?.toString?.() ?? doc.fileLength ?? 0) || 0,
+      size: tamanho(doc),
     }
   }
 
   return {
     kind: 'text',
-    text: m.conversation ?? m.extendedTextMessage?.text ?? m.videoMessage?.caption ?? '',
+    text: m.conversation ?? m.extendedTextMessage?.text ?? '',
     mimetype: null,
   }
 }
@@ -61,9 +80,19 @@ export const aceitaTudo = () => true
 // A persistent failure (WhatsApp throttling this number, a sustained outage)
 // must not turn into hammering the endpoint every 3s forever — exponential
 // backoff with jitter, capped so it never goes past a minute between tries.
-// A document from the phone is downloaded into memory before it is written;
+// Media from the phone is downloaded into memory whole before it is written;
 // past this it is refused instead.
 export const LIMITE_DOCUMENTO = 50 * 1024 * 1024
+
+// What an account downloads, and why. The bot downloads so that Claude can
+// read the file, and Claude cannot watch a video — an account that archives
+// what people send asks for `video` on top of these.
+export const MIDIAS_PARA_CLAUDE = ['image', 'audio', 'document']
+
+// An account that keeps what it receives adds video. Stickers stay out: they
+// are recorded as `[figurinha]` like before, and keeping thousands of them
+// would bury the files that were actually sent to him.
+export const MIDIAS_ARQUIVADAS = [...MIDIAS_PARA_CLAUDE, 'video']
 
 const RECONNECT_BASE_MS = 3000
 const RECONNECT_MAX_MS = 60000
@@ -116,6 +145,13 @@ export function createWhatsapp({
   // Claude — so this can only ever relay text, not act on it.
   onOther = null,
   downloadMedia = true,
+  // Which kinds are worth the download for this account, and the ceiling on
+  // one file. A kind left out is delivered as its text (a video's caption
+  // still arrives) with nothing written to disk.
+  mediaKinds = MIDIAS_PARA_CLAUDE,
+  maxMediaBytes = LIMITE_DOCUMENTO,
+  // Deliver a message that carries neither text nor a downloaded file.
+  entregarSemConteudo = false,
   onHistory,
   onChats,
   label = 'WhatsApp',
@@ -262,12 +298,13 @@ export function createWhatsapp({
           }
 
           const { kind, text, mimetype, fileName, size } = classificar(msg)
+          const baixavel = mediaKinds.includes(kind)
 
           let media = null
-          if (kind === 'document' && size > LIMITE_DOCUMENTO) {
+          if (baixavel && size > maxMediaBytes) {
             // The download is buffered whole in memory; decide before it.
             media = { kind, mimetype, fileName, size, tooLarge: true }
-          } else if (kind !== 'text') {
+          } else if (baixavel) {
             const buffer = await baixarMidia(msg, 'buffer', {}, {
               logger: loggerMudo,
               reuploadRequest: sock.updateMediaMessage,
@@ -277,7 +314,11 @@ export function createWhatsapp({
           }
 
           const texto = text.trim()
-          if (!texto && !media) continue
+          // A sticker, a location, a contact card: nothing to act on, so the
+          // bot drops it rather than handing Claude an empty prompt. An account
+          // that keeps a log of the conversation needs the message anyway —
+          // capture.js turns it into its own placeholder.
+          if (!texto && !media && !entregarSemConteudo) continue
 
           await onMessage({ text: texto, media, raw: msg })
         } catch (err) {

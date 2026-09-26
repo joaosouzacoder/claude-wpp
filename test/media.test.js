@@ -56,6 +56,8 @@ test('saveMedia deriva a extensão do mimetype', () => {
   assert.equal(extname(saveMedia({ dir, buffer, mimetype: 'image/png', kind: 'image' })), '.png')
   assert.equal(extname(saveMedia({ dir, buffer, mimetype: 'image/webp', kind: 'image' })), '.webp')
   assert.equal(extname(saveMedia({ dir, buffer, mimetype: 'audio/mpeg', kind: 'audio' })), '.mp3')
+  assert.equal(extname(saveMedia({ dir, buffer, mimetype: 'video/mp4', kind: 'video' })), '.mp4')
+  assert.equal(extname(saveMedia({ dir, buffer, mimetype: 'video/quicktime', kind: 'video' })), '.mov')
 })
 
 test('saveMedia ignora os parâmetros do mimetype do WhatsApp', () => {
@@ -72,6 +74,7 @@ test('saveMedia cai num default por tipo quando o mimetype é desconhecido', () 
 
   assert.equal(extname(saveMedia({ dir, buffer, mimetype: 'image/exotico', kind: 'image' })), '.jpg')
   assert.equal(extname(saveMedia({ dir, buffer, mimetype: undefined, kind: 'audio' })), '.ogg')
+  assert.equal(extname(saveMedia({ dir, buffer, mimetype: 'video/exotico', kind: 'video' })), '.mp4')
 })
 
 test('saveMedia não sobrescreve arquivo anterior do mesmo tipo', () => {

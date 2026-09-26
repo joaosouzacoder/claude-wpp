@@ -34,7 +34,7 @@ test('imagem vira mídia carregando a legenda e o mimetype', () => {
   const r = classificar({
     message: { imageMessage: { caption: 'que erro é esse?', mimetype: 'image/jpeg' } },
   })
-  assert.deepEqual(r, { kind: 'image', text: 'que erro é esse?', mimetype: 'image/jpeg' })
+  assert.deepEqual(r, { kind: 'image', text: 'que erro é esse?', mimetype: 'image/jpeg', size: 0 })
 })
 
 test('imagem sem legenda vira mídia com texto vazio, não é descartada', () => {
@@ -45,16 +45,15 @@ test('imagem sem legenda vira mídia com texto vazio, não é descartada', () =>
 
 test('áudio e nota de voz viram mídia de áudio', () => {
   const audio = classificar({ message: { audioMessage: { mimetype: 'audio/ogg; codecs=opus' } } })
-  assert.deepEqual(audio, { kind: 'audio', text: '', mimetype: 'audio/ogg; codecs=opus' })
+  assert.deepEqual(audio, { kind: 'audio', text: '', mimetype: 'audio/ogg; codecs=opus', size: 0 })
 
   const ptt = classificar({ message: { audioMessage: { mimetype: 'audio/ogg; codecs=opus', ptt: true } } })
   assert.equal(ptt.kind, 'audio')
 })
 
-test('vídeo segue como antes: só a legenda, sem baixar mídia', () => {
-  const r = classificar({ message: { videoMessage: { caption: 'olha o vídeo', mimetype: 'video/mp4' } } })
-  assert.equal(r.kind, 'text')
-  assert.equal(r.text, 'olha o vídeo')
+test('vídeo vira mídia com legenda, mimetype e tamanho', () => {
+  const r = classificar({ message: { videoMessage: { caption: 'olha o vídeo', mimetype: 'video/mp4', fileLength: 4096 } } })
+  assert.deepEqual(r, { kind: 'video', text: 'olha o vídeo', mimetype: 'video/mp4', size: 4096 })
 })
 
 test('mensagem sem conteúdo conhecido vira texto vazio', () => {

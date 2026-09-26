@@ -1,7 +1,7 @@
 import { openDb } from './db.js'
 import { createCapture } from './capture.js'
 import { createOutbox } from './outbox.js'
-import { createWhatsapp, aceitaTudo, credenciaisValidas } from './whatsapp.js'
+import { createWhatsapp, aceitaTudo, credenciaisValidas, MIDIAS_ARQUIVADAS } from './whatsapp.js'
 import { createWpp } from './wpp.js'
 import { createScheduler } from './scheduler.js'
 import { runClaude } from './claude.js'
@@ -26,12 +26,22 @@ export function montarContaPessoal(config, avisar, log, bot = null) {
 
   // Records and stays silent. There is no path from "a message arrived on my
   // personal WhatsApp" to "Claude does something" — that is the whole point of
-  // "only when I ask".
+  // "only when I ask". Downloading a file does not change that: it is written
+  // to disk and its path recorded, and nothing reads it until he asks.
   const me = createWhatsapp({
     authDir: config.personalAuthDir,
     accept: aceitaTudo,
-    downloadMedia: false,
-    onMessage: ({ raw }) => { capture.record(raw) },
+    mediaDir: config.personalMediaDir,
+    mediaKinds: MIDIAS_ARQUIVADAS,
+    maxMediaBytes: config.personalMediaMaxBytes,
+    // The log is of the conversation, not of what is actionable: a sticker or
+    // a location has no text and no file, and must still become a row.
+    entregarSemConteudo: true,
+    // Only what people send him. His own outgoing files are already on his
+    // phone, and keeping a second copy here buys nothing.
+    onMessage: ({ raw, media }) => {
+      capture.record(raw, { mediaPath: raw?.key?.fromMe ? null : (media?.path ?? null) })
+    },
     onHistory: (mensagens) => {
       let n = 0
       for (const m of mensagens) if (capture.record(m)) n += 1
