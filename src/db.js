@@ -127,6 +127,12 @@ export function openDb(filePath) {
 // new column is nullable or defaulted so existing rows keep their meaning —
 // a draft recorded before `sender` existed was always sent as the owner.
 const COLUNAS_NOVAS = {
+  // Where the received file was written, for the messages whose media is kept.
+  // Null for every row recorded before this existed, which is what it means
+  // now too: the message arrived, the file was not kept.
+  messages: [
+    ['media_path', 'TEXT'],
+  ],
   outbox: [
     ['sender', "TEXT NOT NULL DEFAULT 'me'"],
     ['attachment_path', 'TEXT'],

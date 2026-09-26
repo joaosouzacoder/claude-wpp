@@ -50,6 +50,10 @@ const DEFAULTS = {
   // earlier in the conversation) and never deleted on their own otherwise —
   // this is the automatic backstop against unbounded growth.
   mediaMaxAgeMs: 30 * 24 * 60 * 60 * 1000,
+  // Files people send the personal account are archived rather than read, so
+  // the ceiling is its own: the download is buffered whole in memory, and a
+  // video is the one kind that routinely runs large.
+  personalMediaMaxBytes: 100 * 1024 * 1024,
 }
 
 // Must match config.example.json's apiToken verbatim: copying that file to
@@ -113,6 +117,10 @@ export function loadConfig({ path = join(homedir(), 'claude-wpp', 'config.json')
 
   // Derived after the overrides, so they follow whoever moves the stateDir.
   cfg.mediaDir ??= join(cfg.stateDir, 'media')
+  // Kept apart from the bot's: this is other people's material, arriving
+  // without them asking for it, and mixing the two would make it impossible
+  // to hand one over or wipe it on its own.
+  cfg.personalMediaDir ??= join(cfg.stateDir, 'media-me')
   cfg.botAuthDir ??= join(cfg.stateDir, 'wa-auth')
   cfg.personalAuthDir ??= join(cfg.stateDir, 'wa-auth-me')
   cfg.dbPath ??= join(cfg.stateDir, 'wpp.db')

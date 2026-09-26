@@ -143,8 +143,9 @@ An image is written to `~/.local/state/claude-wpp/media/` and its path goes into
 the prompt; Claude reads the file with its own `Read` tool. The caption is the
 prompt, and `@session` in the caption routes it. Without a caption the bot asks
 Claude to analyse the image. Images are kept on disk so Claude can revisit them
-later in the session — every boot removes anything older than `mediaMaxAgeMs`
-on its own, so growth is bounded automatically instead of needing a manual prune.
+later in the session — anything older than `mediaMaxAgeMs` is removed on boot
+and every six hours after that, so growth is bounded automatically instead of
+needing a manual prune.
 
 A document — PDF, spreadsheet, CSV, log, anything sent as a file — works the
 same way: saved under that directory with its original name (so its extension
@@ -174,7 +175,9 @@ read, as before.
 | `transcribeModel` | `gpt-4o-transcribe` | transcription model |
 | `transcribeTimeoutMs` | `120000` | gives up on a transcription after this |
 | `mediaDir` | `<stateDir>/media` | where received media is written |
-| `mediaMaxAgeMs` | `2592000000` (30 days) | media older than this is deleted on boot |
+| `mediaMaxAgeMs` | `2592000000` (30 days) | media older than this is deleted, on boot and every six hours |
+| `personalMediaDir` | `<stateDir>/media-me` | where files sent to your personal account are kept |
+| `personalMediaMaxBytes` | `104857600` (100 MB) | a file larger than this is recorded but not downloaded |
 | `heartbeatMs` | `300000` | how often a running job repeats that it is alive |
 | `blockedTimeoutMs` | `1200000` (20 min) | how long a `blocked` session is given before claude-wpp cancels it on its own |
 | `attachAboveChars` | `7000` | a reply longer than this arrives as a `.txt` attachment |
@@ -454,6 +457,36 @@ The account only ever **records**. Nothing arriving on your personal WhatsApp
 triggers Claude — there is no code path from an incoming message to an action.
 It acts when you ask it to, from the bot's chat.
 
+### Files people send you
+
+Images, audio, video and documents that other people send you are written to
+`~/.local/state/claude-wpp/media-me/`, and the message's row points at the file
+through `media_path`. Direct chats and groups alike. Nothing reads a file when
+it arrives — downloading changes what is on disk, not what acts on its own.
+
+**They are kept for 30 days** (`mediaMaxAgeMs`), swept on boot and every six
+hours, and the message itself stays in the database after its file is gone. So
+a row with a `media_path` is not a promise that the path still resolves.
+
+What is deliberately left out:
+
+- **Your own outgoing files.** They are already on your phone.
+- **Stickers.** Recorded as `[figurinha]` like before; thousands of them would
+  bury what was actually sent to you.
+- **Anything over `personalMediaMaxBytes`** (100 MB). The download is buffered
+  whole in memory, so the size is checked before it starts, from what the
+  sender declared. The message is still recorded, with no path.
+- **History replayed at pairing.** `npm run pair:me` records the text of that
+  dump; its files are not fetched.
+
+This reverses an earlier decision, and the reason it was made still stands:
+other people's files now sit on this disk, without them being asked. Read
+[SECURITY.md](SECURITY.md#the-personal-account-records-everything-and-it-is-not-your-data-alone).
+
+Kept separate from the bot's own `media/` on purpose — that directory holds
+what **you** sent Claude, this one holds what **others** sent you, so either
+can be handed over or wiped without touching the other.
+
 ### Asking for something
 
 ```
@@ -533,11 +566,14 @@ check the conversation before approving it again.
 ```sql
 chats(jid, name, kind, updated_at)
 messages(id, wa_id, chat_jid, sender_jid, sender_name,
-         from_me, ts, kind, body, quoted_wa_id)
+         from_me, ts, kind, body, quoted_wa_id, media_path)
 ```
 
-Media is never downloaded — an audio message is stored as `[áudio 0:14]`. Text
-search runs through an FTS5 index.
+Every message is stored as readable text — an audio message reads `[áudio
+0:14]` whether or not the file was kept — and text search runs through an FTS5
+index. Files that other people send are also kept for 30 days: see **Files
+people send you** below. `media_path` is where one was written, and null when
+none was kept, which includes every row recorded before this existed.
 
 WhatsApp replays a slice of recent history exactly once, to whichever process
 links the device — so `npm run pair:me` is what records it, and it waits for the

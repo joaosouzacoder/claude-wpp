@@ -80,15 +80,21 @@ never uploaded anywhere: they stay on local disk and Claude reads them there.
 Pairing a personal account (`personalNumber` + `npm run pair:me`) turns the
 service into a recorder. Every message that account sends or receives — direct
 chats and groups alike — is written to `~/.local/state/claude-wpp/wpp.db` in
-plain text, with no expiry. Media files are not downloaded; their text
-placeholder is.
+plain text, with no expiry.
+
+**The files they send are downloaded too**, into
+`~/.local/state/claude-wpp/media-me/`: images, audio, video and documents, from
+direct chats and groups, up to `personalMediaMaxBytes`. Unlike the text, these
+expire — anything older than `mediaMaxAgeMs` (30 days) is deleted, on boot and
+every six hours. Your own outgoing files and stickers are not kept.
 
 Three consequences, stated plainly:
 
 - **The other people in those conversations did not agree to this.** You are a
   participant, so this is not interception, but a group of colleagues writing to
-  what they believe is a phone is in fact writing to a database on a server.
-  Weigh that before pairing an account used for work.
+  what they believe is a phone is in fact writing to a database on a server —
+  and sending what they believe is a photo to a phone puts that file on that
+  server's disk. Weigh that before pairing an account used for work.
 - **Deleting for everyone does not reach this log.** A message withdrawn on
   WhatsApp after it arrived here stays here. That is a deliberate omission, not
   an oversight.
