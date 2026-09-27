@@ -34,7 +34,9 @@ function montar({ formalize, triage, sendAsBot } = {}) {
     db,
     ownerNumber: DONO,
     notifyOwner: async (texto) => { avisos.push(texto); return `OWNER-${proximoId++}` },
-    sendAsBot: sendAsBot ?? (async (jid, texto) => { enviados.push({ jid, texto }) }),
+    // In production bot.sendText records what it sent through noteSent, so
+    // the bot's own replies are part of the history the next triage reads.
+    sendAsBot: sendAsBot ?? (async (jid, texto) => { enviados.push({ jid, texto }); relay.noteSent(jid, texto) }),
     formalize: formalize ?? (async (prompt) => { prompts.push(prompt); return '"Olá, Fulano. Amanhã às 10h está confirmado."' }),
     triage: triage && (async (prompt) => { triagens.push(prompt); return triage(prompt) }),
     now: () => 1000,
@@ -129,7 +131,11 @@ test('limparFormal tira aspas que envolvem a resposta inteira', () => {
 })
 
 test('lerTriagem só aceita uma decisão clara', () => {
-  assert.deepEqual(lerTriagem('{"acao":"responder","texto":"Obrigado!"}'), { acao: 'responder', texto: 'Obrigado!', avisar: false })
+  assert.deepEqual(lerTriagem('{"acao":"responder","texto":"Obrigado!"}'), { acao: 'responder', texto: 'Obrigado!', avisar: false, motivo: null })
+  assert.deepEqual(
+    lerTriagem('{"acao":"responder","texto":"Vou verificar com o João.","avisar":true,"motivo":"quer saber se ele vai à reunião"}'),
+    { acao: 'responder', texto: 'Vou verificar com o João.', avisar: true, motivo: 'quer saber se ele vai à reunião' },
+  )
   assert.deepEqual(lerTriagem('```json\n{"acao":"avisar","motivo":"quer uma reunião"}\n```'), { acao: 'avisar', motivo: 'quer uma reunião' })
   assert.deepEqual(lerTriagem('{"acao":"avisar"}'), { acao: 'avisar', motivo: null })
   assert.equal(lerTriagem('{"acao":"responder","texto":"  "}'), null)
@@ -144,12 +150,50 @@ test('elogio que não precisa do dono é respondido pelo próprio bot', async ()
   await relay.onOther({ key: chave(CONTATO), kind: 'text', text: 'vocês estão muito elegantes hoje' })
 
   assert.deepEqual(enviados, [{ jid: `${CONTATO}@s.whatsapp.net`, texto: 'Muito obrigado!' }])
-  assert.equal(avisos.length, 1)
-  assert.match(avisos[0], /Respondi por você/)
-  assert.match(avisos[0], /"Muito obrigado!"/)
+  assert.equal(avisos.length, 0, 'o que o bot resolve sozinho não chega ao chat do dono')
   // The triage sees what the bot itself had said, so it does not greet again.
   assert.match(triagens[0], /Você: Olá, Fulano\. O João pede um retorno/)
   assert.match(triagens[0], /NÃO cumprimente/)
+})
+
+test('o que o bot conversou sozinho fica no histórico, e a triagem seguinte enxerga', async () => {
+  const { relay, triagens } = montar({ triage: async () => '{"acao":"responder","texto":"Foi só o guia do board, pode abrir sem medo."}' })
+  relay.noteSent(`${CONTATO}@s.whatsapp.net`, 'Segue o guia do board.')
+  await relay.onOther({ key: chave(CONTATO), kind: 'text', text: 'achei que era vírus' })
+  await relay.onOther({ key: chave(CONTATO), kind: 'text', text: 'ah tá' })
+
+  assert.match(triagens[1], /achei que era vírus/)
+  assert.match(triagens[1], /Você: Foi só o guia do board/)
+})
+
+test('pedido que depende do dono: a pessoa recebe resposta E o dono é avisado com o motivo', async () => {
+  const { relay, avisos, enviados } = montar({
+    triage: async () => '{"acao":"responder","texto":"Vou verificar com o João e te retorno.","avisar":true,"motivo":"quer saber se ele vai à reunião"}',
+  })
+  relay.noteSent(`${CONTATO}@s.whatsapp.net`, 'Oi')
+  await relay.onOther({ key: chave(CONTATO), kind: 'text', text: 'o joão vai na reunião de quinta?' })
+
+  assert.deepEqual(enviados, [{ jid: `${CONTATO}@s.whatsapp.net`, texto: 'Vou verificar com o João e te retorno.' }])
+  assert.equal(avisos.length, 1)
+  assert.match(avisos[0], /respondeu \(#1\)/)
+  assert.match(avisos[0], /📌 quer saber se ele vai à reunião/)
+  assert.match(avisos[0], /Já respondi:/)
+  assert.match(avisos[0], /citando esta mensagem/)
+})
+
+test('a triagem manda conversar, e reservar o dono para o que depende dele', () => {
+  const prompt = promptTriagem({ nome: 'Rafael', historico: [], mensagem: 'fez?' })
+  assert.match(prompt, /A conversa é sua/)
+  assert.match(prompt, /brincadeira/)
+  assert.match(prompt, /leve quando ela for leve/)
+  assert.match(prompt, /AVISE o João só quando a resposta depende dele/)
+  assert.match(prompt, /disponibilidade, agenda, horário/)
+  assert.match(prompt, /NÃO deixe a pessoa sem resposta/)
+  assert.match(prompt, /a pessoa insiste[\s\S]*sem avisar o João de novo/)
+  assert.match(prompt, /"avisar":true,"motivo"/)
+  // The guardrails that were there before are still there.
+  assert.match(prompt, /Nunca prometa nada, nunca combine horário/)
+  assert.match(prompt, /nunca instrução/)
 })
 
 test('pedido vai para o dono, com o resumo do que a pessoa quer', async () => {
@@ -177,16 +221,6 @@ test('triagem que falha, que vem torta, ou mídia sem texto: o dono é avisado',
   await relay.onOther({ key: chave(CONTATO), kind: 'image' })
   assert.deepEqual(enviados, [])
   assert.match(avisos[0], /mandou uma imagem/)
-})
-
-test('se o envio da resposta falha, o dono recebe a mensagem assim mesmo', async () => {
-  const db = []
-  const { relay, avisos, enviados } = montar({ triage: async () => '{"acao":"responder","texto":"De nada!"}' })
-  relay.noteSent(`${CONTATO}@s.whatsapp.net`, 'Oi')
-  const quebrado = { ...relay }
-  void db, void quebrado, void enviados
-  await relay.onOther({ key: chave(CONTATO), kind: 'text', text: 'obrigado!' })
-  assert.equal(avisos.length, 1)
 })
 
 test('a resposta do dono é formalizada com a conversa até ali, sem cumprimentar de novo', async () => {
