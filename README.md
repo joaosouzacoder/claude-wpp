@@ -681,15 +681,24 @@ path Claude is given.
 When someone the bot has written to — through `/send`, `/send-file` or a
 draft approved with `/bot` — answers it, the message is triaged first.
 
-- Something that needs nobody — thanks, a compliment, a greeting, "got it" —
-  the bot answers by itself, formally, and tells you what it said.
-- Anything else — a request, a question, a deadline, an invitation, anything
-  that needs your information, opinion, decision or word, and **every** doubt
-  or failure — reaches you numbered, with a one-line note of what they want.
-  Quote it (or send `/r <n> <text>`) to answer: your text, typed or dictated,
-  is rewritten in formal Portuguese by Claude and sent from the bot's number
-  right away. If the rewrite fails, nothing is sent — your raw words never go
-  out through the bot.
+- The conversation is the bot's own. Greetings, thanks, jokes, comments,
+  questions about something it sent, "what exactly do you need?" — it answers
+  by itself, in a cordial tone that follows the person's, and **does not tell
+  you**. What it said stays in `bot_messages`, where the next triage and the
+  `/wpp` session read it.
+- Only what depends on you — availability, agenda, a deadline, a decision,
+  money, a commitment, your opinion, something only you know, work you need
+  to hear about — reaches you numbered, with a one-line note of what they
+  want. The person is not left hanging: the bot has already told them it will
+  check with you, and you see that reply under the message. If they insist
+  before you answer ("e aí?", "fez?"), the bot tells them it has no news yet
+  and does not ping you again. Quote the message (or send `/r <n> <text>`) to
+  answer: your text, typed or dictated, is rewritten in formal Portuguese by
+  Claude and sent from the bot's number right away. If the rewrite fails,
+  nothing is sent — your raw words never go out through the bot.
+- **Every** doubt or failure still reaches you: a triage that errors, an answer
+  that is not a clear decision, a reply that could not be sent, media with no
+  text.
 
 Both the triage and the formal rewrite read the bot's conversation with that
 person (`bot_messages`), so the bot continues a conversation instead of
