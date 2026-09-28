@@ -87,7 +87,7 @@ export function promptFormal({ nome, recebida = null, resposta, historico = [], 
 // Deciding what to do with a message someone sent the bot. The text in it
 // comes from a third party, so this prompt says plainly that it is only ever
 // something to read — and the model that answers it runs with no tools at all.
-export function promptTriagem({ nome, historico, mensagem, assistente = ASSISTENTE_PADRAO }) {
+export function promptTriagem({ nome, historico, mensagem, encaminhada = false, assistente = ASSISTENTE_PADRAO }) {
   return [
     ...persona(assistente),
     '',
@@ -119,7 +119,12 @@ export function promptTriagem({ nome, historico, mensagem, assistente = ASSISTEN
     '',
     `Pessoa: ${nome}`,
     ...(historico.length ? ['Conversa até aqui, da mais antiga para a mais recente:', formatarHistorico(historico), ''] : ['(vocês nunca conversaram antes)', '']),
-    'Mensagem que acabou de chegar:',
+    ...(encaminhada
+      ? ['Mensagem que acabou de chegar — ENCAMINHADA de outra conversa, não foi escrita para você',
+        '(corrente, trend, texto de data comemorativa). Não é uma resposta sua a responder: se ela não',
+        'pergunta nada a você nem ao João, use {"acao":"ignorar"} — nem responda, nem avise.',
+        'Só responda se houver uma pergunta ou pedido de fato dentro dela:']
+      : ['Mensagem que acabou de chegar:']),
     `"${mensagem}"`,
     '',
     'Responda SOMENTE com um JSON numa linha, sem comentários e sem cercas de código:',
@@ -128,6 +133,7 @@ export function promptTriagem({ nome, historico, mensagem, assistente = ASSISTEN
     '{"acao":"responder","texto":"<o que você diz à pessoa>","avisar":true,"motivo":"<o que ela quer, em até 10 palavras>"}',
     'Só quando responder qualquer coisa seria arriscado, avise sem responder:',
     '{"acao":"avisar","motivo":"<o que a pessoa quer, em até 10 palavras>"}',
+    ...(encaminhada ? ['Encaminhamento que não pergunta nada: {"acao":"ignorar"}'] : []),
   ].join('\n')
 }
 
@@ -150,6 +156,7 @@ export function lerTriagem(saida) {
     return { acao: 'responder', texto: resposta, avisar: json.avisar === true, motivo }
   }
   if (json?.acao === 'avisar') return { acao: 'avisar', motivo: String(json.motivo ?? '').trim() || null }
+  if (json?.acao === 'ignorar') return { acao: 'ignorar' }
   return null
 }
 
@@ -200,8 +207,12 @@ export function createRelay({ db, ownerNumber, notifyOwner, sendAsBot, formalize
   }
 
   // A message from someone other than the owner reached the bot.
-  async function onOther({ key, kind, text, pushName }) {
-    if (String(key?.remoteJid ?? '').endsWith('@g.us')) return
+  async function onOther({ key, kind, text, pushName, encaminhada = false }) {
+    const remoteJid = String(key?.remoteJid ?? '')
+    if (remoteJid.endsWith('@g.us')) return
+    // A broadcast list reaches the bot's number like any other contact's, with
+    // the sender in `participant`; it was sent to everyone, not to the bot.
+    if (key?.broadcast || remoteJid.endsWith('@broadcast')) return
     const numero = senderNumber(key)
     if (!numero) return
     const contato = contatoConhecido(numero)
@@ -220,7 +231,14 @@ export function createRelay({ db, ownerNumber, notifyOwner, sendAsBot, formalize
     // a reply flagged `avisar` goes through the numbered path too, so he can
     // carry the conversation on by quoting it. Every failure reaches him.
     let respondida = null
-    const decisao = text ? await decidir({ nome, historico, mensagem: corpo }) : null
+    const decisao = text ? await decidir({ nome, historico, mensagem: corpo, encaminhada }) : null
+    // Only a forward may be let go: content that reached the bot without being
+    // written to it. On anything else "ignorar" is not a decision, and the
+    // message reaches the owner like every unclear answer does.
+    if (decisao?.acao === 'ignorar' && encaminhada) {
+      stmt.podarMensagens.run(now() - RETENCAO_S)
+      return
+    }
     if (decisao?.acao === 'responder') {
       try {
         await sendAsBot(`${contato.number}@s.whatsapp.net`, decisao.texto)
@@ -244,10 +262,10 @@ export function createRelay({ db, ownerNumber, notifyOwner, sendAsBot, formalize
     stmt.podarMensagens.run(now() - RETENCAO_S)
   }
 
-  async function decidir({ nome, historico, mensagem }) {
+  async function decidir({ nome, historico, mensagem, encaminhada = false }) {
     if (!triage) return null
     try {
-      return lerTriagem(await triage(promptTriagem({ nome, historico, mensagem, assistente })))
+      return lerTriagem(await triage(promptTriagem({ nome, historico, mensagem, encaminhada, assistente })))
     } catch (err) {
       log.warn?.(`[relay] triagem falhou (${err.message}); repasso para o dono.`)
       return null

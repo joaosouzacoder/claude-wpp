@@ -714,7 +714,12 @@ of that is a reason to alert you, not to comply. Anything it answers that is
 not a clear decision falls back to alerting you.
 
 Only people the bot has written to are relayed; anyone else writing to the
-bot is ignored, as before, and groups never are. A sender that arrives only
+bot is ignored, as before, and groups never are. Nor is a **broadcast list**:
+it reaches the bot's number exactly like a message from that contact, but it
+went to everyone in their list, so it is neither answered nor passed on. A
+**forwarded** message (a chain, a trend, a holiday text) is marked as such
+for the triage, which may let it go — `ignorar`, allowed only for forwards —
+unless there is an actual question or request inside it. A sender that arrives only
 as an `@lid`, without their number alongside, cannot be matched and is not
 relayed.
 
