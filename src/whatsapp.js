@@ -22,6 +22,15 @@ function tamanho(m) {
   return Number(m?.fileLength?.toString?.() ?? m?.fileLength ?? 0) || 0
 }
 
+// A forward carries the sender's phone, not the sender's words: the relay
+// treats it as content that reached the bot, never as a reply to it.
+export function encaminhada(msg) {
+  const m = msg?.message ?? {}
+  const ctx = (m.imageMessage ?? m.videoMessage ?? m.audioMessage ?? m.documentMessage
+    ?? m.documentWithCaptionMessage?.message?.documentMessage ?? m.extendedTextMessage)?.contextInfo
+  return Boolean(ctx?.isForwarded || Number(ctx?.forwardingScore ?? 0) > 0)
+}
+
 // Separates what can be decided without touching the network from the download.
 export function classificar(msg) {
   const m = msg?.message
@@ -287,7 +296,7 @@ export function createWhatsapp({
           if (!accept(msg.key, msg)) {
             if (onOther && !msg.key?.fromMe && type === 'notify') {
               const { kind, text } = classificar(msg)
-              await onOther({ key: msg.key, kind, text: text.trim(), pushName: msg.pushName ?? null })
+              await onOther({ key: msg.key, kind, text: text.trim(), pushName: msg.pushName ?? null, encaminhada: encaminhada(msg) })
             }
             continue
           }
