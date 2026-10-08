@@ -409,8 +409,13 @@ cannot detect ahead of time or fix at the root — a `claude` behavior around
 reviving a fully dead session, not a bug here. `state: blocked` has even been
 seen sticking around for a turn that actually finished normally (a real
 answer already sitting in the transcript, Stop hooks already run) — the field
-itself just never flipped back. Every time it shows up, claude-wpp checks for
-a fresh reply first and delivers it immediately if there is one; only a
+itself just never flipped back. `busy` has done the same: a turn that had
+answered and closed kept being listed as busy, and since a long turn has no
+ceiling, the bot repeated "ainda trabalhando" for over half an hour. Both are
+handled the same way. Every time either shows up, claude-wpp checks the
+transcript first — for `busy`, the `turn_duration` entry Claude Code writes
+when a turn ends, which a session still waiting on a subagent has not written
+— and delivers the fresh reply immediately if there is one; only a
 genuine stall (no reply, still blocked next poll) gets the "parou esperando"
 notice on WhatsApp (`claude attach <id>` shows what it is waiting on), sent
 once and then left quiet instead of repeating "ainda trabalhando". `/stop`

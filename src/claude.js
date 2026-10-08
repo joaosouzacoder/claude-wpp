@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { ensureTrusted } from './trust.js'
-import { readLastReply } from './transcript.js'
+import { readLastReply, readLastTurnEnd } from './transcript.js'
 
 // `claude --bg` itself only has to print the id and return; the actual work
 // happens in the background session it just started.
@@ -84,6 +84,7 @@ export function createClaude({
   runCli = execCli,
   trust = ensureTrusted,
   readReply = readLastReply,
+  readTurnEnd = readLastTurnEnd,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   now = () => Date.now(),
 } = {}) {
@@ -307,6 +308,17 @@ export function createClaude({
         if (emAndamento(estado)) {
           quietas = 0
           bloqueado = false
+          // `busy` has been seen sticking to a session whose turn had ended —
+          // answer written, turn closed — and with no ceiling that is forever.
+          // The transcript closes every turn with `turn_duration`; a close and
+          // an answer both later than the dispatch outrank the listing.
+          const fim = await readTurnEnd({ cwd, sessionId: sessionIdCompleto })
+          if (fim?.timestamp && Date.parse(fim.timestamp) >= enviadoEm) {
+            const resposta = await readReply({ cwd, sessionId: sessionIdCompleto })
+            if (resposta?.timestamp && Date.parse(resposta.timestamp) >= enviadoEm) {
+              return { ok: true, text: resposta.content, sessionId: sessionIdCompleto, error: null }
+            }
+          }
         } else if (estado?.state === 'blocked') {
           // `state: blocked` has been observed sticking to a session even
           // after its turn actually finished — Stop hooks run, a real answer
