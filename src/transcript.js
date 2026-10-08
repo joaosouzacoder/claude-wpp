@@ -59,6 +59,37 @@ export async function readLastReply({ cwd, sessionId, home } = {}) {
   return null
 }
 
+// When the conversation last finished a turn. Claude Code closes every turn
+// with a `system` entry of subtype `turn_duration`, so this is the transcript's
+// own word on "done" — a parent still waiting on a subagent has not written it.
+export async function readLastTurnEnd({ cwd, sessionId, home } = {}) {
+  if (!cwd || !sessionId) return null
+  let raw
+  try {
+    raw = await readFile(transcriptPath(cwd, sessionId, { home }), 'utf8')
+  } catch {
+    return null
+  }
+
+  for (let i = raw.length; i > 0;) {
+    const inicio = raw.lastIndexOf('\n', i - 2) + 1
+    const linha = raw.slice(inicio, i).trim()
+    i = inicio
+    if (!linha) continue
+
+    let entrada
+    try {
+      entrada = JSON.parse(linha)
+    } catch {
+      continue
+    }
+    if (entrada.type === 'system' && entrada.subtype === 'turn_duration' && entrada.timestamp) {
+      return { timestamp: entrada.timestamp }
+    }
+  }
+  return null
+}
+
 // Everything said after `desde`, both sides, oldest first. A session speaks on
 // its own — a background agent it dispatched finishes and it reports back —
 // and that happens outside any turn this bot started, so the only way to see
