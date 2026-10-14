@@ -178,6 +178,7 @@ read, as before.
 | `mediaMaxAgeMs` | `2592000000` (30 days) | media older than this is deleted, on boot and every six hours |
 | `personalMediaDir` | `<stateDir>/media-me` | where files sent to your personal account are kept |
 | `personalMediaMaxBytes` | `104857600` (100 MB) | a file larger than this is recorded but not downloaded |
+| `wppModel` | `sonnet` | model for the `/wpp` butler session and its draft check; every other session runs on the machine's default (`~/.claude/settings.json`) |
 | `heartbeatMs` | `300000` | how often a running job repeats that it is alive |
 | `blockedTimeoutMs` | `1200000` (20 min) | how long a `blocked` session is given before claude-wpp cancels it on its own |
 | `attachAboveChars` | `7000` | a reply longer than this arrives as a `.txt` attachment |

@@ -116,6 +116,7 @@ export function createClaude({
     timeoutMs = null,
     blockedTimeoutMs = BLOQUEIO_TIMEOUT_MS,
     appendSystemPrompt = null,
+    model = null,
     // Conversation ids that are his, not ours: never stopped, never removed.
     preservar = [],
     // Leave this turn's agent listed in `claude agents` instead of removing it.
@@ -155,6 +156,9 @@ export function createClaude({
       if (name) args.push('-n', name)
       if (sessionId) args.push('--resume', sessionId)
       if (appendSystemPrompt) args.push('--append-system-prompt', appendSystemPrompt)
+      // Without this a session inherits the machine's default model, and a
+      // resumed one keeps whatever it was last switched to.
+      if (model) args.push('--model', model)
       args.push(prompt)
 
       const enviadoEm = now()

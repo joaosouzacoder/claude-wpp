@@ -63,6 +63,7 @@ export function montarContaPessoal(config, avisar, log, bot = null) {
       agentCwd: config.agentCwd,
       timeoutMs: config.timeoutMs,
       timezone: config.timezone,
+      wppModel: config.wppModel,
     },
   })
 

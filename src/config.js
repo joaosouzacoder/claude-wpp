@@ -39,6 +39,9 @@ const DEFAULTS = {
   // owner", so this one can afford to be the better model.
   triageModel: 'sonnet',
   triageTimeoutMs: 3 * 60 * 1000,
+  // The butler's own session and the draft check that serves it. Every other
+  // session is left on the machine's default, which is the owner's choice.
+  wppModel: 'sonnet',
   personalNumber: null,
   // How the assistant introduces itself and signs to other people. A name,
   // not a description: whoever receives the message is talking to him.
