@@ -253,6 +253,7 @@ export function createHandler({ sessions, run, runAttached = null, attach = null
         heartbeatMs: config.heartbeatMs,
         timeoutMs: config.timeoutMs,
         blockedTimeoutMs: config.blockedTimeoutMs,
+        model: sessao.name === SESSAO_WPP ? config.wppModel ?? null : null,
         signal: sessao.abort.signal,
         onSlow: (decorrido) => {
           const texto = avisou

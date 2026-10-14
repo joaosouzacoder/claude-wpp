@@ -171,6 +171,7 @@ export function createWpp({ db, outbox, wa, bot = null, run, config, now = () =>
       cwd: config.agentCwd,
       prompt,
       timeoutMs: config.timeoutMs,
+      model: config.wppModel ?? null,
     })
     if (!r.ok) throw new Error(r.error ?? 'a verificação falhou sem descrição')
     return parseVeredito(r.text)
