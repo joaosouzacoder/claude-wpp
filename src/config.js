@@ -57,6 +57,9 @@ const DEFAULTS = {
   // the ceiling is its own: the download is buffered whole in memory, and a
   // video is the one kind that routinely runs large.
   personalMediaMaxBytes: 100 * 1024 * 1024,
+  // That archive is how a file someone later deleted can still be seen, so it
+  // does not expire by age: it is held under this total, oldest out first.
+  personalMediaQuotaBytes: 10 * 1024 * 1024 * 1024,
 }
 
 // Must match config.example.json's apiToken verbatim: copying that file to

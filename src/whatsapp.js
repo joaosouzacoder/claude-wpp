@@ -103,6 +103,49 @@ export const MIDIAS_PARA_CLAUDE = ['image', 'audio', 'document']
 // would bury the files that were actually sent to him.
 export const MIDIAS_ARQUIVADAS = [...MIDIAS_PARA_CLAUDE, 'video']
 
+// A video at the personal ceiling over a slow link still fits; a download
+// stuck on a dead connection does not hold the message loop past this.
+export const PRAZO_DOWNLOAD_MS = 5 * 60 * 1000
+
+// The sender's declared size is checked before the download, but it can be
+// missing (or wrong). The bytes are therefore counted as they arrive, and the
+// download is abandoned the moment it passes the ceiling or the deadline —
+// nothing is ever buffered past maxBytes.
+export async function baixarComTeto(baixar, { maxBytes, timeoutMs }) {
+  let fonte = null
+  let encerrado = false
+  let timer
+  const prazo = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`download passou de ${Math.round(timeoutMs / 1000)}s`)), timeoutMs)
+  })
+
+  const ler = async () => {
+    fonte = await baixar()
+    // The deadline can pass before the stream even opens.
+    if (encerrado) fonte?.destroy?.()
+    if (Buffer.isBuffer(fonte)) {
+      if (fonte.length > maxBytes) throw Object.assign(new Error('arquivo acima do teto'), { tooLarge: true })
+      return fonte
+    }
+    const pedacos = []
+    let total = 0
+    for await (const pedaco of fonte) {
+      total += pedaco.length
+      if (total > maxBytes) throw Object.assign(new Error('arquivo acima do teto'), { tooLarge: true })
+      pedacos.push(pedaco)
+    }
+    return Buffer.concat(pedacos)
+  }
+
+  try {
+    return await Promise.race([ler(), prazo])
+  } finally {
+    encerrado = true
+    clearTimeout(timer)
+    fonte?.destroy?.()
+  }
+}
+
 const RECONNECT_BASE_MS = 3000
 const RECONNECT_MAX_MS = 60000
 
@@ -159,6 +202,7 @@ export function createWhatsapp({
   // still arrives) with nothing written to disk.
   mediaKinds = MIDIAS_PARA_CLAUDE,
   maxMediaBytes = LIMITE_DOCUMENTO,
+  mediaTimeoutMs = PRAZO_DOWNLOAD_MS,
   // Deliver a message that carries neither text nor a downloaded file.
   entregarSemConteudo = false,
   onHistory,
@@ -314,12 +358,24 @@ export function createWhatsapp({
             // The download is buffered whole in memory; decide before it.
             media = { kind, mimetype, fileName, size, tooLarge: true }
           } else if (baixavel) {
-            const buffer = await baixarMidia(msg, 'buffer', {}, {
-              logger: loggerMudo,
-              reuploadRequest: sock.updateMediaMessage,
-            })
-            media = { kind, mimetype, fileName, path: saveMedia({ dir: mediaDir, buffer, mimetype, kind, fileName }) }
-            log.debug?.(`${kind} salvo em ${media.path}`)
+            // A file that cannot be fetched (expired on WhatsApp's side, a
+            // dropped link, a full disk) costs the file, never the message:
+            // the text still arrives and the conversation is still recorded.
+            try {
+              const buffer = await baixarComTeto(() => baixarMidia(msg, 'stream', {}, {
+                logger: loggerMudo,
+                reuploadRequest: sock.updateMediaMessage,
+              }), { maxBytes: maxMediaBytes, timeoutMs: mediaTimeoutMs })
+              media = { kind, mimetype, fileName, path: saveMedia({ dir: mediaDir, buffer, mimetype, kind, fileName }) }
+              log.debug?.(`${kind} salvo em ${media.path}`)
+            } catch (err) {
+              if (err.tooLarge) {
+                media = { kind, mimetype, fileName, size, tooLarge: true }
+              } else {
+                log.warn?.(`[${label}] não consegui baixar ${kind}: ${err.output?.statusCode ?? err.code ?? err.message}`)
+                media = { kind, mimetype, fileName, size, failed: true }
+              }
+            }
           }
 
           const texto = text.trim()

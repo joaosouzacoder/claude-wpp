@@ -221,6 +221,25 @@ test('sobrevive ao restart: o que estava aprovado continua vencendo', () => {
   db.close()
 })
 
+test('anexos em uso são os de rascunhos e agendamentos que ainda vão sair', () => {
+  const { outbox } = novo()
+  const anexo = (n) => ({ attachment: { path: `/m/${n}.pdf`, name: `${n}.pdf` } })
+  outbox.create(rascunho(anexo('pendente')))
+  const agendado = outbox.create(rascunho({ ...anexo('agendado'), scheduledFor: 9999 }))
+  outbox.approve(agendado.id)
+  const enviando = outbox.create(rascunho(anexo('enviando')))
+  outbox.approve(enviando.id)
+  outbox.markSending(enviando.id)
+  const enviado = outbox.create(rascunho(anexo('enviado')))
+  outbox.approve(enviado.id)
+  outbox.markSent(enviado.id, 'WA-1')
+  const recusado = outbox.create(rascunho(anexo('recusado')))
+  outbox.reject(recusado.id)
+  outbox.create(rascunho())
+
+  assert.deepEqual(outbox.attachmentsInUse().sort(), ['/m/agendado.pdf', '/m/enviando.pdf', '/m/pendente.pdf'])
+})
+
 // --- edição ---
 // Editar não pode virar um jeito de fazer sair um texto que ninguém aprovou:
 // mexer no corpo de algo já aprovado tem que devolver a decisão para o dono.

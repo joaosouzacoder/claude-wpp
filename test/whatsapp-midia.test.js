@@ -1,7 +1,8 @@
 import { test, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, readdirSync } from 'node:fs'
+import { Readable } from 'node:stream'
+import { mkdtempSync, readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createWhatsapp, MIDIAS_PARA_CLAUDE, MIDIAS_ARQUIVADAS } from '../src/whatsapp.js'
@@ -109,6 +110,61 @@ test('tamanho que o remetente não informou não é lido como zero e baixa norma
 
   assert.equal(c.baixado(), 1)
   assert.match(c.arquivos()[0], /\.png$/)
+})
+
+test('tamanho não informado não escapa do teto: o download para no meio e nada é gravado', async () => {
+  let lidos = 0
+  const pedacos = async function* () {
+    for (let i = 0; i < 100; i += 1) { lidos += 1; yield Buffer.alloc(512) }
+  }
+  const c = await montar({
+    mediaKinds: MIDIAS_ARQUIVADAS,
+    maxMediaBytes: 1024,
+    baixarMidia: async () => Readable.from(pedacos()),
+  })
+  await c.entregar({ videoMessage: { mimetype: 'video/mp4' } })
+
+  assert.ok(lidos < 10, `parou cedo, leu ${lidos} pedaço(s)`)
+  assert.deepEqual(c.arquivos(), [])
+  assert.equal(c.recebidas.at(-1)?.media?.tooLarge, true)
+})
+
+test('download em stream que cabe no teto é gravado inteiro', async () => {
+  const c = await montar({
+    mediaKinds: MIDIAS_ARQUIVADAS,
+    baixarMidia: async () => Readable.from([Buffer.from('par'), Buffer.from('tes')]),
+  })
+  await c.entregar({ imageMessage: { mimetype: 'image/png' } })
+
+  assert.equal(readFileSync(c.recebidas.at(-1).media.path, 'utf8'), 'partes')
+})
+
+test('falha no download não derruba a mensagem: ela chega sem o arquivo', async () => {
+  const c = await montar({
+    mediaKinds: MIDIAS_ARQUIVADAS,
+    baixarMidia: async () => { throw new Error('mídia expirou') },
+  })
+  await c.entregar({ imageMessage: { caption: 'olha', mimetype: 'image/jpeg', fileLength: 10 } })
+
+  assert.equal(c.recebidas.length, 1, 'a mensagem ainda é entregue para ser registrada')
+  assert.equal(c.recebidas[0].text, 'olha')
+  assert.equal(c.recebidas[0].media.failed, true)
+  assert.equal(c.recebidas[0].media.path, undefined)
+  assert.deepEqual(c.arquivos(), [])
+})
+
+test('download que trava desiste no prazo e a mensagem segue', async () => {
+  const c = await montar({
+    mediaKinds: MIDIAS_ARQUIVADAS,
+    mediaTimeoutMs: 20,
+    baixarMidia: async () => new Readable({ read() {} }),
+  })
+  await c.entregar({ imageMessage: { mimetype: 'image/jpeg', fileLength: 10 } })
+  await new Promise((r) => setTimeout(r, 60))
+  for (let i = 0; i < 10; i += 1) await new Promise((r) => setImmediate(r))
+
+  assert.equal(c.recebidas.at(-1)?.media?.failed, true)
+  assert.deepEqual(c.arquivos(), [])
 })
 
 test('figurinha não é arquivada: nenhum arquivo vai pro disco', async () => {

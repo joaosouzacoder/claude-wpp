@@ -85,8 +85,11 @@ plain text, with no expiry.
 **The files they send are downloaded too**, into
 `~/.local/state/claude-wpp/media-me/`: images, audio, video and documents, from
 direct chats and groups, up to `personalMediaMaxBytes`. Unlike the text, these
-expire — anything older than `mediaMaxAgeMs` (30 days) is deleted, on boot and
-every six hours. Your own outgoing files and stickers are not kept.
+are bounded — the folder is held under `personalMediaQuotaBytes` (10 GB), oldest
+files deleted first, checked on boot and every 15 minutes. That means a file can
+outlive the message its sender deleted, which is the point, and also that
+nothing older is guaranteed to be gone after any particular date. Your own
+outgoing files and stickers are not kept.
 
 Three consequences, stated plainly:
 

@@ -144,8 +144,9 @@ the prompt; Claude reads the file with its own `Read` tool. The caption is the
 prompt, and `@session` in the caption routes it. Without a caption the bot asks
 Claude to analyse the image. Images are kept on disk so Claude can revisit them
 later in the session — anything older than `mediaMaxAgeMs` is removed on boot
-and every six hours after that, so growth is bounded automatically instead of
-needing a manual prune.
+and every 15 minutes after that, so growth is bounded automatically instead of
+needing a manual prune. A file that a pending draft or scheduled message still
+attaches is never removed.
 
 A document — PDF, spreadsheet, CSV, log, anything sent as a file — works the
 same way: saved under that directory with its original name (so its extension
@@ -175,9 +176,10 @@ read, as before.
 | `transcribeModel` | `gpt-4o-transcribe` | transcription model |
 | `transcribeTimeoutMs` | `120000` | gives up on a transcription after this |
 | `mediaDir` | `<stateDir>/media` | where received media is written |
-| `mediaMaxAgeMs` | `2592000000` (30 days) | media older than this is deleted, on boot and every six hours |
+| `mediaMaxAgeMs` | `2592000000` (30 days) | bot media older than this is deleted, on boot and every 15 minutes |
 | `personalMediaDir` | `<stateDir>/media-me` | where files sent to your personal account are kept |
 | `personalMediaMaxBytes` | `104857600` (100 MB) | a file larger than this is recorded but not downloaded |
+| `personalMediaQuotaBytes` | `10737418240` (10 GB) | past this total, the oldest files in `personalMediaDir` are deleted first |
 | `wppModel` | `sonnet` | model for the `/wpp` butler session and its draft check; every other session runs on the machine's default (`~/.claude/settings.json`) |
 | `heartbeatMs` | `300000` | how often a running job repeats that it is alive |
 | `blockedTimeoutMs` | `1200000` (20 min) | how long a `blocked` session is given before claude-wpp cancels it on its own |
@@ -470,9 +472,15 @@ Images, audio, video and documents that other people send you are written to
 through `media_path`. Direct chats and groups alike. Nothing reads a file when
 it arrives — downloading changes what is on disk, not what acts on its own.
 
-**They are kept for 30 days** (`mediaMaxAgeMs`), swept on boot and every six
-hours, and the message itself stays in the database after its file is gone. So
-a row with a `media_path` is not a promise that the path still resolves.
+**They are kept up to 10 GB in total** (`personalMediaQuotaBytes`), not for a
+fixed time: the point is to still have a file after its sender deleted the
+message. On boot and every 15 minutes the folder is measured, and once it is
+over the quota the oldest files (by modification time) go first until it fits
+again. A file that a pending draft or scheduled message attaches is skipped.
+The sweep runs asynchronously, off the message path, and logs only how many
+files and megabytes it removed. The message itself stays in the database after
+its file is gone, so a row with a `media_path` is not a promise that the path
+still resolves.
 
 What is deliberately left out:
 
@@ -480,10 +488,15 @@ What is deliberately left out:
 - **Stickers.** Recorded as `[figurinha]` like before; thousands of them would
   bury what was actually sent to you.
 - **Anything over `personalMediaMaxBytes`** (100 MB). The download is buffered
-  whole in memory, so the size is checked before it starts, from what the
-  sender declared. The message is still recorded, with no path.
+  in memory, so the size is checked before it starts, from what the sender
+  declared, and the bytes are counted again as they arrive — a file with no
+  declared size is abandoned the moment it passes the ceiling. The message is
+  still recorded, with no path.
+- **A file that fails to download** (expired on WhatsApp's side, a dropped
+  link, more than five minutes). The message is still recorded, with no path.
 - **History replayed at pairing.** `npm run pair:me` records the text of that
-  dump; its files are not fetched.
+  dump; its files are not fetched. Messages that arrive live while it pairs
+  are archived like any other.
 
 This reverses an earlier decision, and the reason it was made still stands:
 other people's files now sit on this disk, without them being asked. Read
@@ -577,7 +590,7 @@ messages(id, wa_id, chat_jid, sender_jid, sender_name,
 
 Every message is stored as readable text — an audio message reads `[áudio
 0:14]` whether or not the file was kept — and text search runs through an FTS5
-index. Files that other people send are also kept for 30 days: see **Files
+index. Files that other people send are also kept, up to a 10 GB total: see **Files
 people send you** below. `media_path` is where one was written, and null when
 none was kept, which includes every row recorded before this existed.
 

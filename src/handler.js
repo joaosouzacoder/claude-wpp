@@ -769,7 +769,14 @@ export function createHandler({ sessions, run, runAttached = null, attach = null
     const { text, media, raw } = typeof entrada === 'string' ? { text: entrada, media: null, raw: null } : (entrada ?? {})
 
     if (media?.tooLarge) {
-      return reply(`O arquivo ${media.fileName ?? ''} tem ${Math.round(media.size / 1024 / 1024)} MB — acima do limite que eu baixo. Compacta ou manda um pedaço.`)
+      // The sender does not always say the size; then it was only found out
+      // by counting the bytes, and the download stopped at the ceiling.
+      const tamanho = media.size ? `tem ${Math.round(media.size / 1024 / 1024)} MB — ` : 'está '
+      return reply(`O arquivo ${media.fileName ?? ''} ${tamanho}acima do limite que eu baixo. Compacta ou manda um pedaço.`)
+    }
+
+    if (media?.failed) {
+      return reply('Não consegui baixar o arquivo do WhatsApp. Manda de novo?')
     }
 
     let texto = text

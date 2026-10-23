@@ -12,7 +12,8 @@ import { classificadorClaude } from './intent.js'
 import { transcribe } from './transcribe.js'
 import { formatDraft, formatDirect } from './wpp.js'
 import { contaPessoalPareada, montarContaPessoal } from './boot.js'
-import { limparMediaAntiga } from './media.js'
+import { limparMediaAntiga, podarMidia } from './media.js'
+import { createOutbox } from './outbox.js'
 import { createNotifier } from './notify.js'
 import { createContactResolver } from './contacts.js'
 import { createRelay, promptFormal, limparFormal } from './relay.js'
@@ -25,9 +26,9 @@ const FORMALIZAR_TIMEOUT_MS = 3 * 60 * 1000
 // How often each session's transcript is re-read for something it said with
 // no turn of ours in flight. Reading a tail off disk, so it can be frequent.
 const VIGIA_INTERVALO_MS = 15 * 1000
-// How often the media directories are swept. Files age out at
-// config.mediaMaxAgeMs; this only decides how late a file can be to leave.
-const VARREDURA_MIDIA_MS = 6 * 60 * 60 * 1000
+// How often the media directories are swept: how late a file can be to age
+// out, and how far past its quota the personal archive can run in between.
+const VARREDURA_MIDIA_MS = 15 * 60 * 1000
 
 const log = {
   info: (m) => console.log(`[info] ${m}`),
@@ -38,17 +39,6 @@ const log = {
 
 async function main() {
   const config = loadConfig({ log })
-
-  // Retention has to hold on a process that stays up for weeks, so the sweep
-  // runs on a clock and not only here. Both directories age out together.
-  const pastasDeMidia = [config.mediaDir, config.personalMediaDir]
-  const varrerMidia = () => {
-    for (const dir of pastasDeMidia) {
-      const removidos = limparMediaAntiga({ dir, maxAgeMs: config.mediaMaxAgeMs })
-      if (removidos) log.info(`${removidos} arquivo(s) de mídia com mais de ${Math.round(config.mediaMaxAgeMs / 86400000)} dia(s) removido(s) de ${dir}.`)
-    }
-  }
-  varrerMidia()
 
   const sessions = createSessions({ store: createStore(join(config.stateDir, 'state.json')), defaultCwd: config.defaultCwd })
   const run = runClaude
@@ -83,6 +73,31 @@ async function main() {
 
   const relayDb = openDb(config.dbPath)
   const tarefas = createTasks({ db: relayDb, timezone: config.timezone })
+
+  // Retention has to hold on a process that stays up for weeks, so the sweep
+  // runs on a clock and not only here. The bot's files age out; the personal
+  // archive is held under its quota instead. Either way, a file a draft or a
+  // scheduled message still points at stays — read straight from the outbox,
+  // so that holds even when the personal account did not come up this time.
+  // Only counts are logged: a file name can carry a contact's name.
+  const anexos = createOutbox({ db: relayDb })
+  let varrendo = false
+  const varrerMidia = async () => {
+    if (varrendo) return
+    varrendo = true
+    try {
+      const protegidos = anexos.attachmentsInUse()
+      const antigos = limparMediaAntiga({ dir: config.mediaDir, maxAgeMs: config.mediaMaxAgeMs, protegidos })
+      if (antigos) log.info(`${antigos} arquivo(s) de mídia do bot com mais de ${Math.round(config.mediaMaxAgeMs / 86400000)} dia(s) removido(s).`)
+      const { removidos, bytes } = await podarMidia({ dir: config.personalMediaDir, maxBytes: config.personalMediaQuotaBytes, protegidos })
+      if (removidos) log.info(`mídia da conta pessoal passou de ${Math.round(config.personalMediaQuotaBytes / 1024 ** 3)} GB: ${removidos} arquivo(s) mais antigo(s) removido(s), ${Math.round(bytes / 1024 ** 2)} MB liberados.`)
+    } catch (err) {
+      log.error(`varredura de mídia falhou: ${err.message}`)
+    } finally {
+      varrendo = false
+    }
+  }
+  varrerMidia()
   const dirFormal = join(config.stateDir, 'formal')
   mkdirSync(dirFormal, { recursive: true })
   let relay = null

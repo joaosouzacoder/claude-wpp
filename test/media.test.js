@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, existsSync, writeFileSync, utimesSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, existsSync, writeFileSync, utimesSync } from 'node:fs'
 import { join, dirname, extname } from 'node:path'
 import { tmpdir } from 'node:os'
-import { saveMedia, promptComImagem, limparMediaAntiga, extrairArquivos } from '../src/media.js'
+import { saveMedia, promptComImagem, limparMediaAntiga, podarMidia, extrairArquivos } from '../src/media.js'
 import { homedir } from 'node:os'
 
 test('documento é salvo com o nome original, sem virar caminho', () => {
@@ -127,4 +127,76 @@ test('limparMediaAntiga remove só o que passou do teto de idade', () => {
 test('limparMediaAntiga em pasta vazia ou inexistente não lança e devolve zero', () => {
   assert.equal(limparMediaAntiga({ dir: pastaTemp(), maxAgeMs: 1000 }), 0)
   assert.equal(limparMediaAntiga({ dir: join(pastaTemp(), 'nunca-existiu'), maxAgeMs: 1000 }), 0)
+})
+
+function comTamanho(dir, nome, bytes, idadeMs, agora = Date.now()) {
+  const caminho = join(dir, nome)
+  writeFileSync(caminho, Buffer.alloc(bytes))
+  const quando = (agora - idadeMs) / 1000
+  utimesSync(caminho, quando, quando)
+  return caminho
+}
+
+test('limparMediaAntiga não apaga um anexo que ainda vai sair pela outbox', () => {
+  const dir = pastaTemp()
+  const agora = Date.now()
+  const anexo = comIdade(dir, 'anexo.pdf', 40 * 24 * 60 * 60 * 1000, agora)
+  const velho = comIdade(dir, 'velho.jpg', 40 * 24 * 60 * 60 * 1000, agora)
+
+  const removidos = limparMediaAntiga({ dir, maxAgeMs: 30 * 24 * 60 * 60 * 1000, now: () => agora, protegidos: [anexo] })
+
+  assert.equal(removidos, 1)
+  assert.ok(existsSync(anexo), 'o rascunho pendente ainda precisa dele')
+  assert.ok(!existsSync(velho))
+})
+
+test('podarMidia apaga os mais antigos até caber no teto', async () => {
+  const dir = pastaTemp()
+  const a = comTamanho(dir, 'a.jpg', 400, 3000)
+  const b = comTamanho(dir, 'b.jpg', 400, 2000)
+  const c = comTamanho(dir, 'c.jpg', 400, 1000)
+
+  const r = await podarMidia({ dir, maxBytes: 900 })
+
+  assert.deepEqual(r, { removidos: 1, bytes: 400 })
+  assert.ok(!existsSync(a), 'o mais antigo sai primeiro')
+  assert.ok(existsSync(b))
+  assert.ok(existsSync(c))
+})
+
+test('podarMidia abaixo do teto não apaga nada, nem o que é antigo', async () => {
+  const dir = pastaTemp()
+  const antigo = comTamanho(dir, 'antigo.jpg', 100, 400 * 24 * 60 * 60 * 1000)
+
+  assert.deepEqual(await podarMidia({ dir, maxBytes: 1000 }), { removidos: 0, bytes: 0 })
+  assert.ok(existsSync(antigo), 'a regra é de tamanho, não de idade')
+})
+
+test('podarMidia pula o anexo protegido e apaga o próximo mais antigo', async () => {
+  const dir = pastaTemp()
+  const anexo = comTamanho(dir, 'anexo.pdf', 400, 3000)
+  const b = comTamanho(dir, 'b.jpg', 400, 2000)
+  const c = comTamanho(dir, 'c.jpg', 400, 1000)
+
+  const r = await podarMidia({ dir, maxBytes: 900, protegidos: [anexo] })
+
+  assert.deepEqual(r, { removidos: 1, bytes: 400 })
+  assert.ok(existsSync(anexo), 'referenciado por rascunho ou agendamento pendente')
+  assert.ok(!existsSync(b))
+  assert.ok(existsSync(c))
+})
+
+test('podarMidia ignora subpastas: só conta e apaga arquivos da própria pasta', async () => {
+  const dir = pastaTemp()
+  mkdirSync(join(dir, 'sub'))
+  const dentro = comTamanho(join(dir, 'sub'), 'dentro.jpg', 5000, 9000)
+  const solto = comTamanho(dir, 'solto.jpg', 10, 1000)
+
+  assert.deepEqual(await podarMidia({ dir, maxBytes: 100 }), { removidos: 0, bytes: 0 })
+  assert.ok(existsSync(solto))
+  assert.ok(existsSync(dentro))
+})
+
+test('podarMidia em pasta inexistente não lança e devolve zero', async () => {
+  assert.deepEqual(await podarMidia({ dir: join(pastaTemp(), 'nunca-existiu'), maxBytes: 1 }), { removidos: 0, bytes: 0 })
 })

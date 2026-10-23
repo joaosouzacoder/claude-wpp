@@ -1170,6 +1170,21 @@ test('documento grande demais é recusado sem rodar o Claude', async () => {
   assert.match(ditos.at(-1), /backup\.zip tem 80 MB/)
 })
 
+test('arquivo que não deu para baixar vira aviso, sem rodar o Claude', async () => {
+  let rodou = false
+  const { handler, ditos } = montar({ run: async () => { rodou = true; return { ok: true, text: '', sessionId: null, error: null } } })
+  await handler.handle({ text: 'olha', media: { kind: 'image', mimetype: 'image/jpeg', failed: true } })
+  assert.equal(rodou, false)
+  assert.match(ditos.at(-1), /Não consegui baixar/)
+})
+
+test('arquivo grande demais sem tamanho informado não diz 0 MB', async () => {
+  const { handler, ditos } = montar()
+  await handler.handle({ text: '', media: { kind: 'video', fileName: null, size: 0, tooLarge: true } })
+  assert.doesNotMatch(ditos.at(-1), /0 MB/)
+  assert.match(ditos.at(-1), /acima do limite/)
+})
+
 test('anexo que falha ao sair cai para os balões de texto: a resposta nunca se perde', async () => {
   const longa = Array.from({ length: 40 }, (_, i) => `linha ${i}`).join('\n')
   const { handler, ditos } = montar({
