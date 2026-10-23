@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync, readdirSync, statSync, unlinkSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readdirSync, statSync, unlinkSync, realpathSync } from 'node:fs'
+import { readdir, stat, realpath, unlink } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
@@ -79,13 +80,26 @@ export function promptComArquivo(legenda, caminho, nomeOriginal) {
   return `${texto}\n\n[arquivo anexado${nome} em ${caminho} — leia o arquivo para responder]`
 }
 
-// Two directories are kept on purpose and neither expires on its own: the
-// bot's, so Claude can revisit a file from earlier in the same conversation
-// (audio excepted — it is deleted right after transcription, see README), and
-// the personal account's archive of what people send. Left alone both grow
-// without bound. Anything older than maxAgeMs goes, regardless of kind; the
-// caller decides how often this runs.
-export function limparMediaAntiga({ dir, maxAgeMs, now = () => Date.now() }) {
+// A draft or a scheduled message can point at a file here for weeks; deleting
+// it would turn the send into a failure. Compared by real path, the same way
+// the API resolved the attachment when it accepted it.
+function caminhosReais(caminhos) {
+  const reais = new Set()
+  for (const c of caminhos ?? []) {
+    try {
+      reais.add(realpathSync(c))
+    } catch {}
+  }
+  return reais
+}
+
+// The bot's directory is kept on purpose, so Claude can revisit a file from
+// earlier in the same conversation (audio excepted — it is deleted right after
+// transcription, see README). Left alone it grows without bound. Anything
+// older than maxAgeMs goes, regardless of kind, unless an outbox row still
+// needs it; the caller decides how often this runs.
+export function limparMediaAntiga({ dir, maxAgeMs, now = () => Date.now(), protegidos = [] }) {
+  const emUso = caminhosReais(protegidos)
   let arquivos
   try {
     arquivos = readdirSync(dir)
@@ -104,9 +118,52 @@ export function limparMediaAntiga({ dir, maxAgeMs, now = () => Date.now() }) {
     }
     if (!info.isFile() || now() - info.mtimeMs <= maxAgeMs) continue
     try {
+      if (emUso.has(realpathSync(caminho))) continue
       unlinkSync(caminho)
       removidos += 1
     } catch {}
   }
   return removidos
+}
+
+// The personal account's archive exists so that what someone sent — and
+// later deleted — can still be seen. Age says nothing about that, so this one
+// is bounded by size alone: past maxBytes, the oldest files (by mtime) go
+// first until the total fits again. Asynchronous on purpose, so a sweep over
+// thousands of files never holds up a message arriving.
+export async function podarMidia({ dir, maxBytes, protegidos = [] }) {
+  const emUso = caminhosReais(protegidos)
+  let nomes
+  try {
+    nomes = await readdir(dir)
+  } catch {
+    return { removidos: 0, bytes: 0 }
+  }
+
+  const arquivos = []
+  let total = 0
+  for (const nome of nomes) {
+    const caminho = join(dir, nome)
+    try {
+      const info = await stat(caminho)
+      if (!info.isFile()) continue
+      arquivos.push({ caminho, tamanho: info.size, mtimeMs: info.mtimeMs })
+      total += info.size
+    } catch {}
+  }
+
+  let removidos = 0
+  let bytes = 0
+  arquivos.sort((a, b) => a.mtimeMs - b.mtimeMs)
+  for (const a of arquivos) {
+    if (total <= maxBytes) break
+    try {
+      if (emUso.has(await realpath(a.caminho))) continue
+      await unlink(a.caminho)
+      total -= a.tamanho
+      bytes += a.tamanho
+      removidos += 1
+    } catch {}
+  }
+  return { removidos, bytes }
 }

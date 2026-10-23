@@ -1,6 +1,6 @@
 import { renameSync, existsSync } from 'node:fs'
 import { loadConfig } from './config.js'
-import { createWhatsapp, aceitaDoBot, aceitaTudo } from './whatsapp.js'
+import { createWhatsapp, aceitaDoBot, aceitaTudo, MIDIAS_ARQUIVADAS } from './whatsapp.js'
 import { openDb } from './db.js'
 import { createCapture } from './capture.js'
 
@@ -28,9 +28,9 @@ if (pessoal) {
   capture = createCapture({ db: openDb(config.dbPath) })
 }
 
-const registrar = (msg) => {
+const registrar = (msg, media = null) => {
   if (!capture) return
-  if (capture.record(msg)) {
+  if (capture.record(msg, { mediaPath: msg?.key?.fromMe ? null : (media?.path ?? null) })) {
     gravadas += 1
     ultima = Date.now()
   }
@@ -40,8 +40,15 @@ function montar() {
   return createWhatsapp({
     authDir: alvo.authDir,
     accept: alvo.accept,
-    downloadMedia: !pessoal,
-    onMessage: async ({ raw }) => registrar(raw),
+    // The personal account archives what arrives while it pairs, exactly as
+    // the daemon does afterwards (see montarContaPessoal). The bot has no
+    // capture here, so a download would only be thrown away.
+    downloadMedia: pessoal,
+    mediaDir: config.personalMediaDir,
+    mediaKinds: MIDIAS_ARQUIVADAS,
+    maxMediaBytes: config.personalMediaMaxBytes,
+    entregarSemConteudo: true,
+    onMessage: async ({ raw, media }) => registrar(raw, media),
     onHistory: pessoal ? (mensagens) => {
       for (const m of mensagens) registrar(m)
       console.log(`  ...${gravadas} mensagem(ns) gravada(s)`)

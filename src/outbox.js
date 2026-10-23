@@ -47,6 +47,10 @@ export function createOutbox({ db, now = () => Math.floor(Date.now() / 1000) }) 
       WHERE id = ? AND status IN ('pending', 'approved')
     `),
     formalizado: db.prepare("UPDATE outbox SET body_bot = ? WHERE id = ? AND status = 'pending'"),
+    anexosEmUso: db.prepare(`
+      SELECT attachment_path FROM outbox
+      WHERE attachment_path IS NOT NULL AND status IN ('pending', 'approved', 'sending')
+    `),
   }
 
   // A transition only fires from the state it is allowed to leave, so a repeated
@@ -83,6 +87,8 @@ export function createOutbox({ db, now = () => Math.floor(Date.now() / 1000) }) 
     scheduled: () => stmt.scheduled.all(),
     due: (ts) => stmt.due.all(ts),
     lastSent: () => stmt.lastSent.get() ?? null,
+    // Files a row that can still go out depends on: the media sweep keeps them.
+    attachmentsInUse: () => stmt.anexosEmUso.all().map((r) => r.attachment_path),
 
     approve(id, sender = 'me') {
       if (!REMETENTES.has(sender)) throw new Error(`remetente desconhecido: ${sender}`)
