@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { EventEmitter } from 'node:events'
 import { DisconnectReason } from '@whiskeysockets/baileys'
-import { classificar, aceitaDoBot, credenciaisValidas, createWhatsapp, atrasoReconexao } from '../src/whatsapp.js'
+import { classificar, aceitaDoBot, credenciaisValidas, credenciaisGravadas, createWhatsapp, atrasoReconexao } from '../src/whatsapp.js'
 
 test('classificar reconhece documento, com e sem legenda, e o tamanho em Long', () => {
   const semLegenda = classificar({ message: { documentMessage: { mimetype: 'application/pdf', fileName: 'a.pdf', fileLength: 1234 } } })
@@ -163,6 +163,26 @@ test('me sem account não conta: o aparelho não foi assinado', () => {
   const dir = dirTemp()
   writeFileSync(join(dir, 'creds.json'), JSON.stringify({ me: { id: '5511911111111@s.whatsapp.net' } }))
   assert.equal(credenciaisValidas(dir), false)
+})
+
+const CREDS_OK = JSON.stringify({
+  me: { id: '5511911111111:3@s.whatsapp.net' },
+  account: { details: 'x', accountSignature: 'y', deviceSignature: 'z' },
+})
+
+// O Baileys grava o creds.json de forma assíncrona (trunca e escreve). Sair do
+// processo no meio disso deixa o arquivo com 0 bytes e o pareamento perdido.
+test('credenciaisGravadas espera o creds.json ficar válido no disco', async () => {
+  const dir = dirTemp()
+  writeFileSync(join(dir, 'creds.json'), '')
+  setTimeout(() => writeFileSync(join(dir, 'creds.json'), CREDS_OK), 30)
+  assert.equal(await credenciaisGravadas(dir, { timeoutMs: 2000, intervaloMs: 10 }), true)
+})
+
+test('credenciaisGravadas desiste no prazo se o arquivo nunca fica válido', async () => {
+  const dir = dirTemp()
+  writeFileSync(join(dir, 'creds.json'), '')
+  assert.equal(await credenciaisGravadas(dir, { timeoutMs: 60, intervaloMs: 10 }), false)
 })
 
 // createWhatsapp() nunca tinha teste nenhum — só os helpers puros acima. Os

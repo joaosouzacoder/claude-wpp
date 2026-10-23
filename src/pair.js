@@ -1,6 +1,6 @@
 import { renameSync, existsSync } from 'node:fs'
 import { loadConfig } from './config.js'
-import { createWhatsapp, aceitaDoBot, aceitaTudo, MIDIAS_ARQUIVADAS } from './whatsapp.js'
+import { createWhatsapp, aceitaDoBot, aceitaTudo, credenciaisGravadas, MIDIAS_ARQUIVADAS } from './whatsapp.js'
 import { openDb } from './db.js'
 import { createCapture } from './capture.js'
 
@@ -123,6 +123,11 @@ if (pessoal) {
   })
 
   console.log(`Histórico gravado: ${gravadas} mensagem(ns).`)
+}
+
+if (!(await credenciaisGravadas(alvo.authDir))) {
+  console.error(`As credenciais não ficaram gravadas em ${alvo.authDir}. Rode o pareamento de novo antes de reiniciar o serviço.`)
+  process.exit(1)
 }
 
 console.log(`Pareado. As credenciais ficaram em ${alvo.authDir}`)
