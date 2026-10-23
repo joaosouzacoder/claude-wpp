@@ -168,6 +168,22 @@ export function credenciaisValidas(authDir) {
   }
 }
 
+// Baileys saves creds.json asynchronously, by truncating and rewriting it, and
+// keeps saving right after the login. A process that exits in that window
+// leaves a 0-byte file: the phone shows the device as linked, and the next
+// start asks for a QR again. Whoever exits after pairing waits for the file to
+// read as valid twice in a row first.
+export async function credenciaisGravadas(authDir, { timeoutMs = 30000, intervaloMs = 500 } = {}) {
+  const limite = Date.now() + timeoutMs
+  let seguidas = 0
+  while (Date.now() < limite) {
+    seguidas = credenciaisValidas(authDir) ? seguidas + 1 : 0
+    if (seguidas >= 2) return true
+    await new Promise((r) => setTimeout(r, intervaloMs))
+  }
+  return false
+}
+
 export function jidDe(destino) {
   const texto = String(destino ?? '')
   return texto.includes('@') ? texto : `${normalizeNumber(texto)}@s.whatsapp.net`
