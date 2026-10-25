@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { ensureTrusted } from './trust.js'
-import { readLastReply, readLastTurnEnd } from './transcript.js'
+import { readLastReply, readLastTurnEnd, readActivity as readTranscriptActivity } from './transcript.js'
 
 // `claude --bg` itself only has to print the id and return; the actual work
 // happens in the background session it just started.
@@ -21,6 +21,11 @@ const BLOQUEIO_TIMEOUT_MS = 20 * 60 * 1000
 // to disk, losing a real reply to that race. A couple of short retries costs
 // nothing on the common case, where the file is already there.
 const LEITURA_TENTATIVAS = 3
+// Ceilings on a turn that is not producing: nothing written at all since the
+// dispatch, or nothing written for a long stretch with the turn still open.
+// The first is cancelled; the second is let go, not killed (see acompanhar).
+const SEM_SAIDA_MS = 10 * 60 * 1000
+const SILENCIO_MS = 30 * 60 * 1000
 
 export function execCli(bin, args, { cwd, timeoutMs = DISPATCH_TIMEOUT_MS, signal } = {}) {
   return new Promise((resolve) => {
@@ -85,6 +90,7 @@ export function createClaude({
   trust = ensureTrusted,
   readReply = readLastReply,
   readTurnEnd = readLastTurnEnd,
+  readActivity = readTranscriptActivity,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   now = () => Date.now(),
 } = {}) {
@@ -115,6 +121,8 @@ export function createClaude({
     heartbeatMs = null,
     timeoutMs = null,
     blockedTimeoutMs = BLOQUEIO_TIMEOUT_MS,
+    semSaidaMs = SEM_SAIDA_MS,
+    silencioMs = SILENCIO_MS,
     appendSystemPrompt = null,
     model = null,
     // Conversation ids that are his, not ours: never stopped, never removed.
@@ -140,7 +148,7 @@ export function createClaude({
     // up front is cheaper than debugging a wedged copy after the fact.
     if (sessionId) {
       const lista = await listAgents(bin).catch(() => null)
-      const emUso = lista?.find((s) => s.sessionId === sessionId && s.status === 'busy')
+      const emUso = lista?.find((s) => s.sessionId === sessionId && emAndamento(s))
       if (emUso) {
         return {
           ok: false,
@@ -173,7 +181,7 @@ export function createClaude({
       return { bgId, enviadoEm }
     }
 
-    return acompanhar({ bin, name, cwd, sessionId, slowNoticeMs, heartbeatMs, timeoutMs, blockedTimeoutMs, preservar, manterEntrada, onSlow, onNotice, onDispatch, signal, disparar })
+    return acompanhar({ bin, name, cwd, sessionId, slowNoticeMs, heartbeatMs, timeoutMs, blockedTimeoutMs, semSaidaMs, silencioMs, preservar, manterEntrada, onSlow, onNotice, onDispatch, signal, disparar })
   }
 
   // Picks a turn back up after this process restarted mid-run. The background
@@ -187,6 +195,8 @@ export function createClaude({
     bgId,
     sessionId = null,
     sentAt,
+    semSaidaMs = SEM_SAIDA_MS,
+    silencioMs = SILENCIO_MS,
     slowNoticeMs = 8000,
     heartbeatMs = null,
     timeoutMs = null,
@@ -198,14 +208,15 @@ export function createClaude({
   } = {}) {
     const enviadoEm = Date.parse(sentAt)
     return acompanhar({
-      bin, name, cwd, sessionId, slowNoticeMs, heartbeatMs, timeoutMs, blockedTimeoutMs, onSlow, onNotice, onDispatch, signal,
+      bin, name, cwd, sessionId, slowNoticeMs, heartbeatMs, timeoutMs, blockedTimeoutMs, semSaidaMs, silencioMs, onSlow, onNotice, onDispatch, signal,
       comecou: enviadoEm,
       disparar: async () => ({ bgId, enviadoEm }),
     })
   }
 
   async function acompanhar({
-    bin, name, cwd, sessionId, slowNoticeMs, heartbeatMs, timeoutMs, blockedTimeoutMs, preservar = [], manterEntrada = false, onSlow, onNotice, onDispatch, signal, disparar,
+    bin, name, cwd, sessionId, slowNoticeMs, heartbeatMs, timeoutMs, blockedTimeoutMs, semSaidaMs = SEM_SAIDA_MS, silencioMs = SILENCIO_MS,
+    preservar = [], manterEntrada = false, onSlow, onNotice, onDispatch, signal, disparar,
     comecou = now(),
   }) {
     let finalizado = false
@@ -213,6 +224,9 @@ export function createClaude({
     // While blocked, onNotice below already says so — repeating "ainda
     // trabalhando" on top of that would claim progress that is not happening.
     let bloqueado = false
+    // Set when the bot stops waiting on a turn that is still open: the agent is
+    // then left running, and the session's next words are forwarded later.
+    let liberado = false
     const avisar = () => { if (!finalizado && !bloqueado) onSlow?.(now() - comecou) }
     const timerLento = setTimeout(() => {
       avisar()
@@ -252,11 +266,13 @@ export function createClaude({
       // nowhere to be seen — a listing that appeared mid-turn and vanished.
       // One entry stays, and the previous one is swept below, so it does not
       // pile up.
+      // A turn let go is still running: nothing of it is stopped or swept.
+      if (liberado) return
       if (bgId) await (manterEntrada ? parar(bgId) : pararERemover(bgId))
       const alvos = new Set([sessionIdCompleto, sessionId].filter((id) => id && !intocavel.has(id)))
       if (!alvos.size) return
       const lista = await listAgents(bin).catch(() => null)
-      const orfas = lista?.filter((s) => alvos.has(s.sessionId) && s.id && s.id !== bgId && s.status !== 'busy') ?? []
+      const orfas = lista?.filter((s) => alvos.has(s.sessionId) && s.id && s.id !== bgId && !emAndamento(s)) ?? []
       for (const orfa of orfas) await pararERemover(orfa.id)
     }
 
@@ -286,6 +302,51 @@ export function createClaude({
           return { ok: false, text: '', sessionId: sessionIdCompleto, error: `Passei do tempo limite (${Math.round(timeoutMs / 1000)}s) e cancelei.` }
         }
 
+        // The transcript has the last word on "done": Claude Code closes every
+        // turn with `turn_duration`. Checked before the listing on every look,
+        // because the listing has lied in every direction (busy, blocked and
+        // failed, each seen stuck on a turn that was over).
+        const fim = await readTurnEnd({ cwd, sessionId: sessionIdCompleto })
+        if (fim?.timestamp && Date.parse(fim.timestamp) >= enviadoEm) {
+          const resposta = await readReply({ cwd, sessionId: sessionIdCompleto })
+          if (resposta?.timestamp && Date.parse(resposta.timestamp) >= enviadoEm) {
+            return { ok: true, text: resposta.content, sessionId: sessionIdCompleto, error: null }
+          }
+          return { ok: false, text: '', sessionId: sessionIdCompleto, error: `${name ?? bgId} recebeu, mas terminou sem responder em texto` }
+        }
+
+        // Two ceilings the listing cannot override. Nothing written at all this
+        // long after the dispatch is a hung agent, and it is cancelled: there is
+        // nothing to lose. Written something, then silent this long with the
+        // turn still open, is let go instead — the agent may be waiting on a
+        // subagent and killing it would throw that work away. The bot stops
+        // waiting and the session's next words reach him through the watcher.
+        const atividade = await readActivity({ cwd, sessionId: sessionIdCompleto })
+        const ultimaSaida = atividade?.lastAssistantAt ? Date.parse(atividade.lastAssistantAt) : null
+        const produziu = ultimaSaida !== null && ultimaSaida >= enviadoEm
+        if (!produziu && semSaidaMs && now() - enviadoEm > semSaidaMs) {
+          await pararSessao()
+          return {
+            ok: false,
+            text: '',
+            sessionId: sessionIdCompleto,
+            error: `${name ?? bgId} não produziu nada em ${Math.round(semSaidaMs / 60000)}min — cancelei. Manda de novo.`,
+          }
+        }
+        if (produziu && silencioMs && atividade?.modifiedAt && now() - atividade.modifiedAt > silencioMs) {
+          liberado = true
+          const parcial = await readReply({ cwd, sessionId: sessionIdCompleto })
+          const ultimo = parcial?.timestamp && Date.parse(parcial.timestamp) >= enviadoEm ? `\n\nÚltimo que ela disse:\n\n${parcial.content}` : ''
+          return {
+            ok: true,
+            tarde: true,
+            desde: atividade.lastAssistantAt,
+            sessionId: sessionIdCompleto,
+            text: `${name ?? bgId} está há ${Math.round(silencioMs / 60000)}min sem escrever nada e o turno não fechou. Parei de esperar; se ela responder, te encaminho.${ultimo}`,
+            error: null,
+          }
+        }
+
         let lista
         let falhaDaListagem = false
         try {
@@ -312,17 +373,6 @@ export function createClaude({
         if (emAndamento(estado)) {
           quietas = 0
           bloqueado = false
-          // `busy` has been seen sticking to a session whose turn had ended —
-          // answer written, turn closed — and with no ceiling that is forever.
-          // The transcript closes every turn with `turn_duration`; a close and
-          // an answer both later than the dispatch outrank the listing.
-          const fim = await readTurnEnd({ cwd, sessionId: sessionIdCompleto })
-          if (fim?.timestamp && Date.parse(fim.timestamp) >= enviadoEm) {
-            const resposta = await readReply({ cwd, sessionId: sessionIdCompleto })
-            if (resposta?.timestamp && Date.parse(resposta.timestamp) >= enviadoEm) {
-              return { ok: true, text: resposta.content, sessionId: sessionIdCompleto, error: null }
-            }
-          }
         } else if (estado?.state === 'blocked') {
           // `state: blocked` has been observed sticking to a session even
           // after its turn actually finished — Stop hooks run, a real answer

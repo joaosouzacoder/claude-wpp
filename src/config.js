@@ -16,6 +16,13 @@ const DEFAULTS = {
   // known claude bug with no way out on its own, so waiting forever on it is
   // never the right default (see the comment above BLOQUEIO_TIMEOUT_MS).
   blockedTimeoutMs: 20 * 60 * 1000,
+  // Two ceilings a turn cannot talk its way past. A turn that has written
+  // nothing at all this long after being asked is hung, and is cancelled. A
+  // turn that wrote something and then went silent this long with no close is
+  // let go: the bot stops waiting, the session keeps running, and whatever it
+  // says later is forwarded when it arrives.
+  semSaidaMs: 10 * 60 * 1000,
+  silencioMs: 30 * 60 * 1000,
   maxMessageChars: 3500,
   // Past this, a reply arrives as a preview plus a .txt attachment instead of
   // a run of message bubbles: two full bubbles is where reading on a phone

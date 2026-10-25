@@ -21,13 +21,17 @@
 import { execFile } from 'node:child_process'
 import { readdir, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { readLastReply, transcriptPath } from './transcript.js'
+import { readLastReply, readLastTurnEnd, readActivity as readTranscriptActivity, transcriptPath } from './transcript.js'
 
 const ESPERA_ATTACH_MS = 12000
 const INTERVALO_POLL_MS = 2000
 // A turn is done when a new assistant message has been on disk for this long
 // without another one following it: Claude Code writes several as it works.
-const SOSSEGO_MS = 6000
+const SOSSEGO_MS = 60000
+// Same two ceilings as claude.js, with one difference: this is his session,
+// so neither ever stops it — the bot only stops waiting.
+const SEM_SAIDA_MS = 10 * 60 * 1000
+const SILENCIO_MS = 30 * 60 * 1000
 
 export function createTmux({ exec = execFile, bin = 'tmux', timeoutMs = 15000 } = {}) {
   const rodar = (args) => new Promise((resolve) => {
@@ -97,6 +101,8 @@ export async function descobrirSessao({ cwd, anterior, desde, home, listar = rea
 export function createAttachedRunner({
   tmux = createTmux(),
   readReply = readLastReply,
+  readTurnEnd = readLastTurnEnd,
+  readActivity = readTranscriptActivity,
   descobrir = descobrirSessao,
   bin = 'claude',
   now = () => Date.now(),
@@ -108,6 +114,7 @@ export function createAttachedRunner({
   return async function runAttached({
     nome, cwd, agentId, sessionId, prompt,
     slowNoticeMs = 8000, heartbeatMs = null, timeoutMs = null,
+    semSaidaMs = SEM_SAIDA_MS, silencioMs = SILENCIO_MS,
     onSlow, onNotice, signal,
   }) {
     // `podeCair` marks the failures where the message never reached his
@@ -175,10 +182,41 @@ export function createAttachedRunner({
       const resposta = await readReply({ cwd, sessionId: alvo }).catch(() => null)
       const nova = resposta?.content && resposta.timestamp !== marcoAnterior
 
+      // The turn is over when the transcript closes it, whatever was said so
+      // far. A text that has sat still for SOSSEGO_MS is the fallback, for a
+      // transcript that never records the close.
+      const fim = await readTurnEnd({ cwd, sessionId: alvo }).catch(() => null)
+      const fechou = fim?.timestamp && Date.parse(fim.timestamp) >= comecou
+      if (fechou) {
+        if (nova) return { ok: true, text: resposta.content, sessionId: alvo, janela, abriu, error: null }
+        return falha(`a sessão ${nome} terminou o turno sem responder em texto`)
+      }
       if (nova && candidata?.timestamp === resposta.timestamp && now() - candidata.vistaEm >= SOSSEGO_MS) {
         return { ok: true, text: resposta.content, sessionId: alvo, janela, abriu, error: null }
       }
       if (nova && candidata?.timestamp !== resposta.timestamp) candidata = { timestamp: resposta.timestamp, vistaEm: now() }
+
+      // Nothing written since the prompt, or written and then silent, each for
+      // too long: stop waiting. His session is never stopped from here.
+      const atividade = await readActivity({ cwd, sessionId: alvo }).catch(() => null)
+      const ultimaSaida = atividade?.lastAssistantAt ? Date.parse(atividade.lastAssistantAt) : null
+      const produziu = ultimaSaida !== null && ultimaSaida >= comecou
+      if (!produziu && semSaidaMs && now() - comecou > semSaidaMs) {
+        return falha(`a sessão ${nome} não escreveu nada em ${Math.round(semSaidaMs / 60000)}min depois da sua mensagem — parei de esperar. Olha nela com tmux attach -t ${janela}.`)
+      }
+      if (produziu && silencioMs && atividade?.modifiedAt && now() - atividade.modifiedAt > silencioMs) {
+        const ultimo = nova ? `\n\nÚltimo que ela disse:\n\n${resposta.content}` : ''
+        return {
+          ok: true,
+          tarde: true,
+          desde: atividade.lastAssistantAt,
+          sessionId: alvo,
+          janela,
+          abriu,
+          text: `a sessão ${nome} está há ${Math.round(silencioMs / 60000)}min sem escrever nada e o turno não fechou. Parei de esperar; se ela responder, te encaminho.${ultimo}`,
+          error: null,
+        }
+      }
 
       const decorrido = now() - comecou
       if (!avisouLento && slowNoticeMs && decorrido >= slowNoticeMs) {
