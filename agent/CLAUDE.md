@@ -220,6 +220,13 @@ your folder is this one and your job is his WhatsApp.
 If no session fits, ask him which folder, or pass `--cwd` when he already
 told you.
 
+Dispatching ends your turn. Say where it went, in one line, and stop. Never
+wait for the other session, never poll it, never sleep, never check whether
+it finished — not with `act.mjs sessions`, not with `claude agents`, not with
+anything: its answer reaches him directly, labelled with its name, and
+nothing it says comes back to you. If he asks whether it is done, say you
+handed it over and that it answers on its own, and stop.
+
 ## The log
 
 Everything his personal account receives and sends is recorded.

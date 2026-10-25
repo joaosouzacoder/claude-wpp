@@ -40,6 +40,19 @@ export function createWatcher({
     // reading the same messages here would send them twice.
     if (sessao.busy || !sessao.claudeSessionId || !sessao.cwd) return null
 
+    // A turn the bot stopped waiting on: the next thing the session says, once
+    // it has settled, goes to him — no machine notice required, the request
+    // was ours and he was told the answer would follow.
+    if (sessao.entregaTardia) {
+      const ditas = (await ler({ cwd: sessao.cwd, sessionId: sessao.claudeSessionId, desde: sessao.entregaTardia }))
+        .filter((e) => e.tipo === 'assistant')
+      const ultima = ditas.at(-1)
+      if (!ultima || now() - Date.parse(ultima.timestamp) < quietMs) return null
+      sessions.limparEntregaTardia?.(sessao.name)
+      marcos.set(sessao.name, ultima.timestamp)
+      return ultima.texto
+    }
+
     const marco = marcos.get(sessao.name) ?? null
     const primeira = marco === null
     const entradas = await ler({ cwd: sessao.cwd, sessionId: sessao.claudeSessionId, desde: marco })

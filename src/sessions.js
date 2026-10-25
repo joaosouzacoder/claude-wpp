@@ -52,6 +52,7 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
     // a restart nothing is known to be ours, and the watcher stays quiet
     // rather than forwarding what he asked for at his own keyboard.
     promptsDoBot: [],
+    entregaTardia: null,
   }))
 
   let activeSession = sessions.some((s) => s.name === salvo.activeSession) ? salvo.activeSession : null
@@ -100,6 +101,7 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
         busy: false,
         abort: null,
         promptsDoBot: [],
+        entregaTardia: null,
       }
       sessions.push(sessao)
       if (activate) activeSession = nome
@@ -242,6 +244,21 @@ export function createSessions({ store, defaultCwd = homedir(), now = () => new 
       if (!s || !texto?.trim()) return false
       const lido = texto.trim()
       return s.promptsDoBot.some((p) => lido === p || lido.startsWith(p.slice(0, 120)))
+    },
+
+    // A turn the bot stopped waiting on, still open in the session. From
+    // `desde` on, the session's next words belong to him and the watcher
+    // forwards them. In memory only: after a restart the mark is gone, and so
+    // is the turn it referred to.
+    marcarEntregaTardia(name, desde) {
+      const s = api.get(name)
+      if (!s || !desde) return
+      s.entregaTardia = desde
+    },
+
+    limparEntregaTardia(name) {
+      const s = api.get(name)
+      if (s) s.entregaTardia = null
     },
 
     touch(name) {

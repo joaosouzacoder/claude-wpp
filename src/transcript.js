@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -88,6 +88,40 @@ export async function readLastTurnEnd({ cwd, sessionId, home } = {}) {
     }
   }
   return null
+}
+
+// Whether the conversation is alive: when the assistant last wrote anything —
+// text or a tool call — and when the file itself was last touched. A turn that
+// has written nothing since it was asked is hung, not slow; one whose file has
+// gone quiet for long with the turn still open is waiting on something.
+export async function readActivity({ cwd, sessionId, home } = {}) {
+  if (!cwd || !sessionId) return null
+  const caminho = transcriptPath(cwd, sessionId, { home })
+  let raw
+  let modifiedAt = null
+  try {
+    modifiedAt = (await stat(caminho)).mtimeMs
+    raw = await readFile(caminho, 'utf8')
+  } catch {
+    return null
+  }
+
+  for (let i = raw.length; i > 0;) {
+    const inicio = raw.lastIndexOf('\n', i - 2) + 1
+    const linha = raw.slice(inicio, i).trim()
+    i = inicio
+    if (!linha) continue
+    let entrada
+    try {
+      entrada = JSON.parse(linha)
+    } catch {
+      continue
+    }
+    if (entrada.type === 'assistant' && entrada.timestamp) {
+      return { lastAssistantAt: entrada.timestamp, modifiedAt }
+    }
+  }
+  return { lastAssistantAt: null, modifiedAt }
 }
 
 // Everything said after `desde`, both sides, oldest first. A session speaks on

@@ -278,6 +278,9 @@ export function createHandler({ sessions, run, runAttached = null, attach = null
 
       if (r.sessionBroken) sessao.claudeSessionId = null
       else if (r.sessionId) sessao.claudeSessionId = r.sessionId
+      // The bot gave up waiting on a turn still open: whatever the session
+      // writes after this point is his, and the watcher delivers it.
+      if (r.tarde && r.desde) sessions.marcarEntregaTardia?.(sessao.name, r.desde)
       sessions.touch(sessao.name)
 
       // A delivery failure here (WhatsApp send rejecting) must never strand

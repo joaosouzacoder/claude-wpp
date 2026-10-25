@@ -183,6 +183,8 @@ read, as before.
 | `wppModel` | `sonnet` | model for the `/wpp` butler session and its draft check; every other session runs on the machine's default (`~/.claude/settings.json`) |
 | `heartbeatMs` | `300000` | how often a running job repeats that it is alive |
 | `blockedTimeoutMs` | `1200000` (20 min) | how long a `blocked` session is given before claude-wpp cancels it on its own |
+| `semSaidaMs` | `600000` (10 min) | a turn that has written nothing at all this long after being asked is cancelled |
+| `silencioMs` | `1800000` (30 min) | a turn that wrote something and then went silent this long, still open, is let go: the bot stops waiting, the session keeps running, its next words are forwarded when they come |
 | `attachAboveChars` | `7000` | a reply longer than this arrives as a `.txt` attachment |
 
 When something takes longer than 8 seconds, the bot replies `Trabalhando nisso.`
@@ -190,9 +192,18 @@ and then repeats `Ainda trabalhando nisso (12min).` every `heartbeatMs` until
 the result arrives, so a long job and a stuck one stop looking alike.
 
 There is no time ceiling on an ordinary long job: one that needs an hour gets
-an hour. The cost is that a stuck run holds its session until you send
-`/stop`, so nothing queued behind it moves. Set `timeoutMs` in milliseconds if
-you would rather have a cap. Every reply is prefixed with
+an hour, as long as it is doing something. What ends a turn is the transcript,
+not `claude agents`: Claude Code closes every turn with a `turn_duration`
+entry, and the bot delivers the answer the moment that entry appears, whatever
+the listing says — it has been seen stuck on `busy`, `blocked` and `failed`
+alike for turns that were over. Two ceilings guard the turns that are *not*
+doing anything. A turn that has written nothing at all `semSaidaMs` after being
+asked (10 minutes) is hung and is cancelled. A turn that wrote something and
+then went silent for `silencioMs` (30 minutes) with no close is let go: the bot
+tells you it stopped waiting, the session keeps running — it may be waiting on
+a subagent — and the next thing it says is forwarded to you when it arrives.
+Nothing queued behind a turn waits longer than that. Set `timeoutMs` in
+milliseconds if you want a hard cap on top. Every reply is prefixed with
 `[session-name]`, because with parallel sessions they arrive out of order.
 
 A reply longer than `attachAboveChars` — a diff, a log, a long report — does
