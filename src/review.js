@@ -112,7 +112,9 @@ export function promptRevisao({ pr, diff, assistente, contexto = null }) {
     '',
     ...(clone
       ? [
-        `Você está dentro de um clone local deste repositório, no branch \`${clone.branch}\`` +
+        (clone.mesmoRepo
+          ? `Você está dentro de um clone local deste repositório, no branch \`${clone.branch}\``
+          : `Você está dentro de um clone local de \`${clone.repo.owner}/${clone.repo.repo}\`, de onde este repositório foi copiado (mesmo histórico, contém o commit base do PR), no branch \`${clone.branch}\``) +
           (clone.noBranchDoPr ? ' — o mesmo branch do PR, mas pode estar desatualizado.' : ', que NÃO é o branch do PR.'),
         'Use Read, Grep e Glob para entender o contexto do que mudou: quem chama, contratos, testes',
         'existentes, padrões do projeto. O diff abaixo é a verdade sobre o que o PR muda; o clone é',
@@ -221,23 +223,39 @@ export function createReviewer({
     return r.code === 0 ? String(r.stdout ?? '').trim() : null
   }
 
-  // Any checkout under projectsDir whose origin is this repository; the one
+  // A checkout under projectsDir whose origin is this repository; the one
   // already on the PR's branch wins. Matching on the remote, not the folder
   // name: a second clone on a feature branch lives under another name.
-  async function acharClone(pedido, headRefName) {
+  // Failing that, a checkout that already has the PR's base commit: a
+  // repository started as a copy of another one (not a GitHub fork) shares its
+  // history, its rules and its project memory. One that also has the head
+  // commit is closer still.
+  async function acharClone(pedido, pr) {
     if (!projectsDir || !existsSync(projectsDir)) return null
-    let achados = []
+    const candidatos = []
     for (const e of readdirSync(projectsDir, { withFileTypes: true })) {
       if (!e.isDirectory()) continue
       const dir = join(projectsDir, e.name)
       if (!existsSync(join(dir, '.git'))) continue
-      const remote = lerRemote(await git(dir, ['remote', 'get-url', 'origin']))
-      if (!remote || `${remote.owner}/${remote.repo}`.toLowerCase() !== `${pedido.owner}/${pedido.repo}`.toLowerCase()) continue
-      const branch = await git(dir, ['rev-parse', '--abbrev-ref', 'HEAD'])
-      achados.push({ dir, branch: branch ?? '?', noBranchDoPr: branch === headRefName })
+      const repo = lerRemote(await git(dir, ['remote', 'get-url', 'origin']))
+      if (!repo) continue
+      candidatos.push({ dir, repo, mesmoRepo: `${repo.owner}/${repo.repo}`.toLowerCase() === `${pedido.owner}/${pedido.repo}`.toLowerCase() })
     }
-    achados = achados.sort((a, b) => Number(b.noBranchDoPr) - Number(a.noBranchDoPr))
-    return achados[0] ?? null
+    const temCommit = async (dir, oid) => Boolean(oid && /^[0-9a-f]{7,64}$/i.test(oid) && await git(dir, ['cat-file', '-t', oid]) === 'commit')
+
+    let achados = candidatos.filter((c) => c.mesmoRepo)
+    if (!achados.length) {
+      for (const c of candidatos) {
+        if (!await temCommit(c.dir, pr.baseRefOid)) continue
+        achados.push({ ...c, temHead: await temCommit(c.dir, pr.headRefOid) })
+      }
+    }
+    for (const c of achados) {
+      c.branch = (await git(c.dir, ['rev-parse', '--abbrev-ref', 'HEAD'])) ?? '?'
+      c.noBranchDoPr = c.mesmoRepo && c.branch === pr.headRefName
+    }
+    const peso = (c) => Number(c.noBranchDoPr) * 2 + Number(Boolean(c.temHead))
+    return achados.sort((a, b) => peso(b) - peso(a))[0] ?? null
   }
 
   function lerRegras(dir) {
@@ -253,10 +271,12 @@ export function createReviewer({
   }
 
   // Project-scoped on purpose: the model never gets to choose the scope.
-  async function lerMemorias(pedido, titulo) {
+  // The memory follows the clone: a copied repository works from the
+  // original's project.
+  async function lerMemorias(repo, titulo) {
     const termos = termosDeBusca(titulo)
     if (!termos.length) return null
-    const projeto = `${pedido.owner}-${pedido.repo}`.toLowerCase()
+    const projeto = `${repo.owner}-${repo.repo}`.toLowerCase()
     const escopo = ['--workspace', memoryWorkspace, '--project', projeto]
     const busca = await exec(memoryBin, ['search', ...escopo, '-n', String(MAX_MEMORIAS), '--json', termos.join(' OR ')], { timeoutMs: 30_000 })
     if (busca.code !== 0) return null
@@ -277,21 +297,21 @@ export function createReviewer({
   }
 
   async function montarContexto(pedido, pr) {
-    const clone = await acharClone(pedido, pr.headRefName).catch((e) => { log.warn?.(`[review] procurando o clone: ${e.message}`); return null })
+    const clone = await acharClone(pedido, pr).catch((e) => { log.warn?.(`[review] procurando o clone: ${e.message}`); return null })
     if (!clone) return null
-    const memorias = await lerMemorias(pedido, pr.title).catch((e) => { log.warn?.(`[review] memórias: ${e.message}`); return null })
+    const memorias = await lerMemorias(clone.repo, pr.title).catch((e) => { log.warn?.(`[review] memórias: ${e.message}`); return null })
     return { clone, regras: lerRegras(clone.dir), memorias }
   }
 
   async function revisar({ pedido, jid, nome }) {
-    const pr = JSON.parse(await gh(['pr', 'view', pedido.url, '--json', 'url,title,body,author,state,baseRefName,headRefName,additions,deletions,changedFiles']))
+    const pr = JSON.parse(await gh(['pr', 'view', pedido.url, '--json', 'url,title,body,author,state,baseRefName,headRefName,baseRefOid,headRefOid,additions,deletions,changedFiles']))
     if (pr.state !== 'OPEN') {
       await sendAsBot(jid, `O PR ${pedido.url} está ${pr.state === 'MERGED' ? 'mergeado' : 'fechado'}; não revisei.`)
       return
     }
     const diff = await baixarDiff(pedido)
     const contexto = await montarContexto(pedido, pr)
-    log.info?.(`[review] ${pedido.chave}: ${contexto ? `no clone ${contexto.clone.dir} (${contexto.clone.branch}), regras ${contexto.regras ? 'sim' : 'não'}, memórias ${contexto.memorias ? 'sim' : 'não'}` : 'sem clone, sem ferramentas'}.`)
+    log.info?.(`[review] ${pedido.chave}: ${contexto ? `no clone ${contexto.clone.dir} (${contexto.clone.repo.owner}/${contexto.clone.repo.repo}, ${contexto.clone.branch}${contexto.clone.mesmoRepo ? '' : ', por histórico'}), regras ${contexto.regras ? 'sim' : 'não'}, memórias ${contexto.memorias ? 'sim' : 'não'}` : 'sem clone, sem ferramentas'}.`)
     const args = contexto
       ? ['-p', '--model', model, '--restricted', '--strict-mcp-config', '--tools', 'Read,Grep,Glob', '--disallowedTools', ...NEGADOS]
       : ['-p', '--model', model, '--tools', '', '--setting-sources', 'project', '--strict-mcp-config']

@@ -23,7 +23,7 @@ function montar({ estado = 'OPEN', revisao = 'Sem achados.\n— Claudinei', falh
     if (bin === 'gh' && diffGrande && args[1] === 'diff') return { code: 1, stdout: '', stderr: 'HTTP 406: the diff exceeded the maximum number of lines (20000)\nPullRequest.diff too_large' }
     if (bin === 'gh' && args[0] === 'api') return { code: 0, stdout: 'diff --git a/y b/y\n+por arquivo' }
     if (bin === 'gh' && args[1] === 'view') {
-      return { code: 0, stdout: JSON.stringify({ url: args[2], title: 'feat: x', body: 'desc', author: { login: 'milton' }, state: estado, baseRefName: 'develop', headRefName: 'feat/x', additions: 3, deletions: 1, changedFiles: 1 }) }
+      return { code: 0, stdout: JSON.stringify({ url: args[2], title: 'feat: x', body: 'desc', author: { login: 'milton' }, state: estado, baseRefName: 'develop', headRefName: 'feat/x', baseRefOid: 'aaaaaaa1', headRefOid: 'bbbbbbb2', additions: 3, deletions: 1, changedFiles: 1 }) }
     }
     if (bin === 'gh' && args[1] === 'diff') return { code: 0, stdout: 'diff --git a/x b/x\n+ok' }
     if (bin === 'gh' && args[1] === 'review') return { code: 0, stdout: '' }
@@ -32,6 +32,7 @@ function montar({ estado = 'OPEN', revisao = 'Sem achados.\n— Claudinei', falh
       if (!clone) return { code: 128, stdout: '', stderr: 'not a repo' }
       if (args[2] === 'remote') return { code: 0, stdout: `${clone.remote}\n` }
       if (args[2] === 'rev-parse') return { code: 0, stdout: `${clone.branch}\n` }
+      if (args[2] === 'cat-file') return (clone.commits ?? []).includes(args[4]) ? { code: 0, stdout: 'commit\n' } : { code: 128, stdout: '', stderr: 'bad object' }
     }
     if (bin === 'ai-memory' && args[0] === 'search') {
       return memoria ? { code: 0, stdout: JSON.stringify([{ path: 'gotchas/rls.md', title: 'RLS por tenant', snippet: 's' }]) } : { code: 1, stdout: '', stderr: 'no project' }
@@ -268,4 +269,43 @@ test('assinatura do assistente no fim é removida, o resto fica', () => {
   assert.equal(semAssinatura('Achado 1.\n\n— Claudinei'), 'Achado 1.')
   assert.equal(semAssinatura('Achado 1.\n-- Claudinei, assistente do João'), 'Achado 1.')
   assert.equal(semAssinatura('- item que cita Claudinei no meio\nfim'), '- item que cita Claudinei no meio\nfim')
+})
+
+const COPIA = 'https://github.com/Solvers-it/my-solvers-solversone/pull/1'
+
+test('repo copiado de outro: usa o clone que tem o commit base, com as memórias do original', async () => {
+  const p = projetos({
+    'nada-a-ver': { remote: 'git@github.com:Solvers-it/confiserv.git', branch: 'main', commits: [] },
+    'my-solvers': { remote: 'git@github.com:Solvers-it/my-solvers.git', branch: 'main', commits: ['aaaaaaa1'], regras: 'Regra do original.' },
+  })
+  const { revisor, chamadas, esperar } = montar(p)
+  await revisor.onOther({ key: chave(MILTON), text: COPIA })
+  await esperar()
+  const claude = chamadas.find((c) => c.bin === 'claude')
+  assert.ok(claude.args.includes('--restricted'))
+  assert.match(claude.input, /clone local de `Solvers-it\/my-solvers`, de onde este repositório foi copiado/)
+  assert.match(claude.input, /Regra do original/)
+  const busca = chamadas.find((c) => c.bin === 'ai-memory' && c.args[0] === 'search')
+  assert.equal(busca.args[busca.args.indexOf('--project') + 1], 'solvers-it-my-solvers')
+})
+
+test('entre clones por histórico, ganha o que também tem o commit do head', async () => {
+  const p = projetos({
+    a: { remote: 'git@github.com:Solvers-it/my-solvers.git', branch: 'main', commits: ['aaaaaaa1'] },
+    b: { remote: 'git@github.com:Solvers-it/my-solvers.git', branch: 'feat/y', commits: ['aaaaaaa1', 'bbbbbbb2'] },
+  })
+  const { revisor, chamadas, esperar } = montar(p)
+  await revisor.onOther({ key: chave(MILTON), text: COPIA })
+  await esperar()
+  assert.match(chamadas.find((c) => c.bin === 'claude').input, /no branch `feat\/y`/)
+})
+
+test('clone sem o commit base não serve: segue sem ferramentas', async () => {
+  const p = projetos({ x: { remote: 'git@github.com:Solvers-it/my-solvers.git', branch: 'main', commits: ['outro'] } })
+  const { revisor, chamadas, esperar } = montar(p)
+  await revisor.onOther({ key: chave(MILTON), text: COPIA })
+  await esperar()
+  const claude = chamadas.find((c) => c.bin === 'claude')
+  assert.ok(!claude.args.includes('--restricted'))
+  assert.ok(!chamadas.some((c) => c.bin === 'ai-memory'))
 })
