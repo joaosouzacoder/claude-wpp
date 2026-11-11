@@ -18,6 +18,7 @@ import { createNotifier } from './notify.js'
 import { createContactResolver } from './contacts.js'
 import { createRelay, promptFormal, limparFormal } from './relay.js'
 import { createTasks } from './tasks.js'
+import { createReviewer } from './review.js'
 import { openDb } from './db.js'
 import { mkdirSync } from 'node:fs'
 
@@ -66,7 +67,17 @@ async function main() {
     },
     // Replies from people the bot wrote to are relayed to the owner; nothing
     // from anyone else reaches the handler.
-    onOther: (m) => (relay ? relay.onOther(m).catch((e) => log.error(`[relay] ${e.stack ?? e.message}`)) : undefined),
+    // A pull request link from someone allowed to ask for reviews is the one
+    // exception, handled by the reviewer instead.
+    onOther: async (m) => {
+      try {
+        if (await revisor?.onOther(m)) return
+      } catch (e) {
+        log.error(`[review] ${e.stack ?? e.message}`)
+        return
+      }
+      if (relay) await relay.onOther(m).catch((e) => log.error(`[relay] ${e.stack ?? e.message}`))
+    },
     label: 'bot',
     log,
   })
@@ -101,6 +112,7 @@ async function main() {
   const dirFormal = join(config.stateDir, 'formal')
   mkdirSync(dirFormal, { recursive: true })
   let relay = null
+  let revisor = null
 
   // Every send the bot makes goes through here, so whoever it writes to —
   // through the API, a /bot draft, an attachment — is someone whose reply
@@ -147,6 +159,24 @@ async function main() {
     assistente: config.assistantName,
     log,
   })
+
+  revisor = createReviewer({
+    requesters: config.prReviewers,
+    owners: config.prReviewOwners,
+    exec: execCli,
+    claudeBin: config.claudeBin,
+    model: config.reviewModel,
+    projectsDir: config.reviewProjectsDir,
+    memoryWorkspace: config.reviewMemoryWorkspace,
+    cwd: dirFormal,
+    timeoutMs: config.reviewTimeoutMs,
+    assistente: config.assistantName,
+    sendAsBot: (destino, texto) => bot.sendText(destino, texto),
+    notifyOwner: avisar,
+    nomeDe: (numero) => relayDb.prepare('SELECT name FROM chats WHERE jid = ?').get(`${numero}@s.whatsapp.net`)?.name ?? null,
+    log,
+  })
+  if (revisor.ativo) log.info(`revisão de PR liberada para ${config.prReviewers.length} número(s), repos de ${config.prReviewOwners.join(', ')}.`)
 
   log.info(`${sessions.list().length} sessão(ões) recuperada(s) do estado.`)
   await whatsapp.connect()

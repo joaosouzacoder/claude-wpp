@@ -27,7 +27,7 @@ const LEITURA_TENTATIVAS = 3
 const SEM_SAIDA_MS = 10 * 60 * 1000
 const SILENCIO_MS = 30 * 60 * 1000
 
-export function execCli(bin, args, { cwd, timeoutMs = DISPATCH_TIMEOUT_MS, signal } = {}) {
+export function execCli(bin, args, { cwd, timeoutMs = DISPATCH_TIMEOUT_MS, signal, input = null } = {}) {
   return new Promise((resolve) => {
     let out = ''
     let err = ''
@@ -35,7 +35,12 @@ export function execCli(bin, args, { cwd, timeoutMs = DISPATCH_TIMEOUT_MS, signa
     // Own process group: killing only the parent would leave `claude`'s own
     // children (this dispatch call is brief, but not guaranteed instant)
     // holding stdout open.
-    const child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], detached: true })
+    // `input` goes through stdin: a PR diff does not fit in one argv entry.
+    const child = spawn(bin, args, { cwd, stdio: [input == null ? 'ignore' : 'pipe', 'pipe', 'pipe'], detached: true })
+    if (input != null) {
+      child.stdin.on('error', () => {})
+      child.stdin.end(String(input))
+    }
 
     const matar = () => {
       try {
