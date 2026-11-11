@@ -11,7 +11,7 @@ const PR = 'https://github.com/Solvers-it/my-solvers/pull/42'
 
 const chave = (numero, extra = {}) => ({ remoteJid: `${numero}@s.whatsapp.net`, fromMe: false, ...extra })
 
-function montar({ estado = 'OPEN', revisao = 'Sem achados.\n— Claudinei', falhaClaude = false, falhaGh = null, diffGrande = false, projectsDir = null, clones = {}, memoria = true } = {}) {
+function montar({ estado = 'OPEN', revisao = 'Sem achados.\n— Claudinei', falhaClaude = false, falhaGh = null, diffGrande = false, projectsDir = null, clones = {}, memoria = true, anteriores = [], maxPorPr = 3, delta = 'diff --git a/z b/z\n+mudou' } = {}) {
   const chamadas = []
   const enviados = []
   const avisos = []
@@ -21,6 +21,10 @@ function montar({ estado = 'OPEN', revisao = 'Sem achados.\n— Claudinei', falh
     chamadas.push({ bin, args, input: opts.input ?? null })
     if (bin === 'gh' && falhaGh === args[1]) return { code: 1, stdout: '', stderr: 'boom' }
     if (bin === 'gh' && diffGrande && args[1] === 'diff') return { code: 1, stdout: '', stderr: 'HTTP 406: the diff exceeded the maximum number of lines (20000)\nPullRequest.diff too_large' }
+    if (bin === 'gh' && args[0] === 'api' && args[1] === 'user') return { code: 0, stdout: 'joaosouzacoder\n' }
+    if (bin === 'gh' && args[0] === 'api' && /\/reviews$/.test(args[2] ?? '')) return { code: 0, stdout: anteriores.map((a) => JSON.stringify(a)).join('\n') }
+    if (bin === 'gh' && args[0] === 'api' && /\/issues\/\d+\/comments$/.test(args[2] ?? '')) return { code: 0, stdout: '### milton\nObrigado, corrigi em bbbbbbb2.' }
+    if (bin === 'gh' && args[0] === 'api' && /\/compare\//.test(args[1] ?? '')) return delta == null ? { code: 1, stdout: '', stderr: 'HTTP 404' } : { code: 0, stdout: delta }
     if (bin === 'gh' && args[0] === 'api') return { code: 0, stdout: 'diff --git a/y b/y\n+por arquivo' }
     if (bin === 'gh' && args[1] === 'view') {
       return { code: 0, stdout: JSON.stringify({ url: args[2], title: 'feat: x', body: 'desc', author: { login: 'milton' }, state: estado, baseRefName: 'develop', headRefName: 'feat/x', baseRefOid: 'aaaaaaa1', headRefOid: 'bbbbbbb2', additions: 3, deletions: 1, changedFiles: 1 }) }
@@ -52,6 +56,7 @@ function montar({ estado = 'OPEN', revisao = 'Sem achados.\n— Claudinei', falh
     notifyOwner: async (texto) => { avisos.push(texto) },
     nomeDe: () => 'Milton Yoshida',
     projectsDir,
+    maxPorPr,
     log: { info() {}, warn() {}, error() {} },
   })
   const esperar = async () => {
@@ -173,7 +178,7 @@ test('diff grande demais para o GitHub cai na lista de arquivos do PR', async ()
   const { revisor, chamadas, esperar } = montar({ diffGrande: true })
   await revisor.onOther({ key: chave(MILTON), text: PR })
   await esperar()
-  const api = chamadas.find((c) => c.args[0] === 'api')
+  const api = chamadas.find((c) => c.args[0] === 'api' && /\/files$/.test(c.args[2] ?? ''))
   assert.equal(api.args[2], 'repos/Solvers-it/my-solvers/pulls/42/files')
   assert.match(chamadas.find((c) => c.bin === 'claude').input, /\+por arquivo/)
   assert.ok(chamadas.some((c) => c.args[1] === 'review'))
@@ -308,4 +313,60 @@ test('clone sem o commit base não serve: segue sem ferramentas', async () => {
   const claude = chamadas.find((c) => c.bin === 'claude')
   assert.ok(!claude.args.includes('--restricted'))
   assert.ok(!chamadas.some((c) => c.bin === 'ai-memory'))
+})
+
+const ANTERIOR = (commit, quando, corpo = 'Bloqueante: falta teste em a.js:3') => ({ commit_id: commit, submitted_at: quando, body: corpo })
+
+test('segunda revisão é incremental: anterior, respostas e o que mudou desde então', async () => {
+  const { revisor, chamadas, enviados, avisos, esperar } = montar({ anteriores: [ANTERIOR('aaaaaaa0', '2026-11-11T15:00:00Z')] })
+  await revisor.onOther({ key: chave(MILTON), text: PR })
+  await esperar()
+  const input = chamadas.find((c) => c.bin === 'claude').input
+  assert.match(input, /revisão 2 de no máximo 3/)
+  assert.match(input, /Bloqueante: falta teste em a\.js:3/)
+  assert.match(input, /corrigi em bbbbbbb2/)
+  assert.match(input, /\+mudou/)
+  assert.match(input, /"Sem bloqueios\."/)
+  const compare = chamadas.find((c) => /compare/.test(c.args[1] ?? ''))
+  assert.equal(compare.args[1], 'repos/Solvers-it/my-solvers/compare/aaaaaaa0...bbbbbbb2')
+  assert.ok(chamadas.some((c) => c.args[1] === 'review'))
+  assert.match(avisos[0], /\(2\/3\)/)
+  assert.doesNotMatch(enviados.at(-1).texto, /última/)
+})
+
+test('a última revisão permitida avisa que foi a última', async () => {
+  const { revisor, chamadas, enviados, esperar } = montar({ anteriores: [ANTERIOR('a1a1a1a', '2026-11-11T15:00:00Z'), ANTERIOR('a2a2a2a', '2026-11-11T15:10:00Z')] })
+  await revisor.onOther({ key: chave(MILTON), text: PR })
+  await esperar()
+  assert.match(chamadas.find((c) => c.bin === 'claude').input, /revisão 3 de no máximo 3 deste PR — a última/)
+  assert.match(enviados.at(-1).texto, /Foi a última revisão deste PR/)
+})
+
+test('no teto, não revisa e avisa os dois', async () => {
+  const tres = [ANTERIOR('a1a1a1a', '2026-11-11T15:00:00Z'), ANTERIOR('a2a2a2a', '2026-11-11T15:10:00Z'), ANTERIOR('a3a3a3a', '2026-11-11T15:20:00Z')]
+  const { revisor, chamadas, enviados, avisos, esperar } = montar({ anteriores: tres })
+  await revisor.onOther({ key: chave(MILTON), text: PR })
+  await esperar()
+  assert.ok(!chamadas.some((c) => c.bin === 'claude'))
+  assert.ok(!chamadas.some((c) => c.args[1] === 'review'))
+  assert.match(enviados.at(-1).texto, /3 vezes, que é o limite/)
+  assert.match(avisos[0], /teto é 3/)
+})
+
+test('o mesmo commit não é revisado de novo', async () => {
+  const { revisor, chamadas, enviados, avisos, esperar } = montar({ anteriores: [ANTERIOR('bbbbbbb2', '2026-11-11T15:00:00Z')] })
+  await revisor.onOther({ key: chave(MILTON), text: PR })
+  await esperar()
+  assert.ok(!chamadas.some((c) => c.bin === 'claude'))
+  assert.match(enviados.at(-1).texto, /neste commit \(bbbbbbb\)/)
+  assert.deepEqual(avisos, [])
+})
+
+test('histórico reescrito: sem delta, a revisão segue incremental com o diff completo', async () => {
+  const { revisor, chamadas, esperar } = montar({ anteriores: [ANTERIOR('aaaaaaa0', '2026-11-11T15:00:00Z')], delta: null })
+  await revisor.onOther({ key: chave(MILTON), text: PR })
+  await esperar()
+  const input = chamadas.find((c) => c.bin === 'claude').input
+  assert.match(input, /histórico reescrito/)
+  assert.match(input, /diff --git a\/x b\/x/)
 })

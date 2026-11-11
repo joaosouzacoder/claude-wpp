@@ -168,6 +168,7 @@ async function main() {
     model: config.reviewModel,
     projectsDir: config.reviewProjectsDir,
     memoryWorkspace: config.reviewMemoryWorkspace,
+    maxPorPr: config.reviewMaxPerPr,
     cwd: dirFormal,
     timeoutMs: config.reviewTimeoutMs,
     assistente: config.assistantName,

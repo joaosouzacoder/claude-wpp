@@ -58,6 +58,9 @@ const DEFAULTS = {
   // runs inside it, read-only, with its rules and the project's AI Memory.
   reviewProjectsDir: join(homedir(), 'projects'),
   reviewMemoryWorkspace: 'default',
+  // Reviews this bot posts on one PR, ever. From the second on, each one only
+  // follows up on the previous; past this, another needs the owner.
+  reviewMaxPerPr: 3,
   reviewTimeoutMs: 15 * 60 * 1000,
   personalNumber: null,
   // How the assistant introduces itself and signs to other people. A name,
