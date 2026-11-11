@@ -706,6 +706,41 @@ sending immediately as the bot.
 for `/ok` on WhatsApp. It is how `agent/propose.mjs` works, and the only write
 path Claude is given.
 
+### Pull request reviews for other people
+
+`prReviewers` (numbers) and `prReviewOwners` (GitHub owners) let a few people
+ask the bot for a code review, and nothing else:
+
+```json
+"prReviewers": ["5511911111111"],
+"prReviewOwners": ["my-org"]
+```
+
+A message from one of those numbers that carries a
+`https://github.com/<owner>/<repo>/pull/<n>` link of an allowed owner is
+acknowledged, the PR is fetched with `gh` (falling back to the per-file
+patches when GitHub refuses the whole diff) and reviewed by `claude -p`
+(`reviewModel`, `reviewTimeoutMs`). The result is posted unsigned as a single
+`gh pr review --comment` from the host's `gh` account. It never approves or
+requests changes. The requester is told when it is done, and you get a
+one-line note; any failure reaches both of you and posts nothing.
+
+When a checkout whose `origin` is that repository exists directly under
+`reviewProjectsDir` (default `~/projects`; one on the PR's branch wins), the
+review runs inside it with `claude --restricted`: only Read, Grep and Glob,
+confined to that clone, secret-looking files (`.env*`, keys, `*credentials*`,
+`*.tfvars`…) denied, no MCP servers and none of your settings or hooks. The
+repository's `CLAUDE.md`/`AGENTS.md` and the AI Memory pages of that one
+project (`<owner>-<repo>` in `reviewMemoryWorkspace`) are fetched by the
+daemon and handed over as text, so the model cannot pick another scope.
+Without a clone the model gets no tools at all. A review containing something
+credential-shaped is not posted.
+
+A link to any other owner is refused. A message from them without a PR link is
+answered with how to ask for one, and goes nowhere else. Reviews run one
+at a time, at most five waiting, and the same PR is not queued twice. Either
+list empty leaves the feature off.
+
 ### Replies to the bot
 
 When someone the bot has written to — through `/send`, `/send-file` or a

@@ -49,6 +49,16 @@ const DEFAULTS = {
   // The butler's own session and the draft check that serves it. Every other
   // session is left on the machine's default, which is the owner's choice.
   wppModel: 'sonnet',
+  // Who may ask the bot for a pull request review, and whose repositories it
+  // will review. Both must be set; either one empty leaves the feature off.
+  prReviewers: [],
+  prReviewOwners: [],
+  reviewModel: 'opus',
+  // Where the owner keeps his clones. A review of a repository cloned here
+  // runs inside it, read-only, with its rules and the project's AI Memory.
+  reviewProjectsDir: join(homedir(), 'projects'),
+  reviewMemoryWorkspace: 'default',
+  reviewTimeoutMs: 15 * 60 * 1000,
   personalNumber: null,
   // How the assistant introduces itself and signs to other people. A name,
   // not a description: whoever receives the message is talking to him.
