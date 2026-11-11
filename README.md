@@ -716,30 +716,47 @@ ask the bot for a code review, and nothing else:
 "prReviewOwners": ["my-org"]
 ```
 
-A message from one of those numbers that carries a
+A message from one of those numbers with a
 `https://github.com/<owner>/<repo>/pull/<n>` link of an allowed owner is
-acknowledged, the PR is fetched with `gh` (falling back to the per-file
-patches when GitHub refuses the whole diff) and reviewed by `claude -p`
-(`reviewModel`, `reviewTimeoutMs`). The result is posted unsigned as a single
-`gh pr review --comment` from the host's `gh` account. It never approves or
-requests changes. The requester is told when it is done, and you get a
-one-line note; any failure reaches both of you and posts nothing.
+acknowledged and queued; anything else from them gets how to ask for one.
 
-When a checkout whose `origin` is that repository exists directly under
-`reviewProjectsDir` (default `~/projects`; one on the PR's branch wins), the
-review runs inside it with `claude --restricted`: only Read, Grep and Glob,
-confined to that clone, secret-looking files (`.env*`, keys, `*credentials*`,
-`*.tfvars`…) denied, no MCP servers and none of your settings or hooks. The
-repository's `CLAUDE.md`/`AGENTS.md` and the AI Memory pages of that one
-project (`<owner>-<repo>` in `reviewMemoryWorkspace`) are fetched by the
-daemon and handed over as text, so the model cannot pick another scope.
-Without a clone the model gets no tools at all. A review containing something
-credential-shaped is not posted.
+**Where it runs.** When a checkout under `reviewProjectsDir` (default
+`~/projects`) has that repository as `origin` — or, failing that, already has
+the PR's base commit (a repository copied from another one) — the PR's head is
+fetched into `refs/claude-wpp/*` and checked out in a throwaway worktree under
+`reviewWorktreesDir`, with the whole diff in `.claude-wpp-review/pr.diff`. The
+review runs there in `claude --restricted` (`reviewModel`, `reviewTimeoutMs`):
+Read, Grep and Glob only, confined to the worktree, secret-looking files denied,
+no MCP servers, none of your settings or hooks. The worktree and refs are
+removed afterwards; your own checkout is never touched. Without a usable clone
+the model gets no tools at all.
 
-A link to any other owner is refused. A message from them without a PR link is
-answered with how to ask for one, and goes nowhere else. Reviews run one
-at a time, at most five waiting, and the same PR is not queued twice. Either
-list empty leaves the feature off.
+**What it reads.** The repository's `CLAUDE.md`/`AGENTS.md` from the *base*
+branch (the PR cannot rewrite its own rules), your checklist for that GitHub
+owner at `reviewChecklistsDir/<owner>.md`, the AI Memory pages of that one
+project (`<owner>-<repo>` of the clone, in `reviewMemoryWorkspace`), the
+commits and the PR's CI. If CI is still running it waits up to
+`reviewCiWaitMs`.
+
+**What it posts.** One unsigned `gh pr review --comment`: a paragraph on
+whether it can be merged, `[BLOQUEADOR]`, `[MAIOR]`, numbered minors and what
+was not executed. A review that looks like it carries a credential is not
+posted.
+
+**Merging.** The PR is squash-merged into `reviewMergeBase` (default
+`develop`) with `--match-head-commit` only when all of these hold: the model's
+verdict counts zero blocking and zero major findings and the text has no such
+section, CI has checks and every one passed, the PR targets that branch, is
+mergeable and not a draft, and its head is still the reviewed commit. Never
+`--admin`, never another branch. Deploying is not the bot's job. Otherwise
+it says why it did not merge; asking again for the same, cleanly reviewed
+commit only retries the merge.
+
+**Repeated requests.** GitHub is the record of what the `gh` account already
+posted. The same commit is never reviewed twice; from the second review on,
+only the previous findings and what changed since are checked; at most
+`reviewMaxPerPr` (3) reviews per PR, then the requester is told and you are
+notified. Reviews run one at a time, at most five waiting.
 
 ### Replies to the bot
 
