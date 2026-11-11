@@ -36,16 +36,19 @@ SIM swap is a full host compromise, not a messaging inconvenience.
   default and no wildcard. Every other sender is dropped.
 - **Silence to unknown senders.** An unauthorized message gets a debug log and
   no reply. The service does not confirm its own existence.
-- **PR reviews are the only thing anyone else can trigger.** Numbers in
-  `prReviewers` can send a GitHub PR link of an owner in `prReviewOwners`. The
-  daemon fetches the PR with `gh` and posts the model's text as a review
-  comment (never approve/request changes). With a local clone of that repo the
-  model runs in `claude --restricted` inside it — Read/Grep/Glob only, confined
-  to the clone, secret-looking files denied, no MCP, no user settings or hooks;
-  without one it has no tools. Memory and repo rules are fetched by the daemon,
-  scoped to that project. The PR is untrusted input and could steer the model
-  into quoting code from that same clone into the comment; credential-shaped
-  output is refused before posting.
+- **PR reviews are the only thing anyone else can trigger — and they can
+  merge.** Numbers in `prReviewers` can send a GitHub PR link of an owner in
+  `prReviewOwners`. The PR is untrusted input. The model reading it never runs
+  a command: with a local clone it works in a throwaway worktree of the PR in
+  `claude --restricted` (Read/Grep/Glob confined there, secret-looking files
+  denied, no MCP, no user settings or hooks); without one it has no tools.
+  Repo rules come from the base branch, memory is fetched by the daemon scoped
+  to that project, and credential-shaped output is refused before posting.
+  A squash merge into `reviewMergeBase` happens only on a clean verdict *and*
+  checks made here: all CI green, right base, mergeable, not a draft, head
+  unchanged (`--match-head-commit`). A PR crafted to talk the model into a
+  clean verdict still has to pass CI; protect the target branch with required
+  checks and reviews if that is not enough for you.
 - **JID normalization before comparison.** Numbers are reduced to digits and the
   Brazilian ninth-digit variance is tolerated, so a legacy-format sender still
   matches — and two different area codes never do. Group messages and `fromMe`

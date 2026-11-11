@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createReviewer, lerPedidos, promptRevisao, lerRemote, termosDeBusca, pareceSegredo, semAssinatura, NEGADOS } from '../src/review.js'
+import { createReviewer, lerPedidos, promptRevisao, lerRemote, termosDeBusca, pareceSegredo, semAssinatura, lerVeredito, lerMarca, marca, estadoCi, NEGADOS } from '../src/review.js'
 
 const MILTON = '5511911111111'
 const OUTRO = '5511922222222'
@@ -11,14 +11,20 @@ const PR = 'https://github.com/Solvers-it/my-solvers/pull/42'
 
 const chave = (numero, extra = {}) => ({ remoteJid: `${numero}@s.whatsapp.net`, fromMe: false, ...extra })
 
-function montar({ estado = 'OPEN', revisao = 'Sem achados.\n— Claudinei', falhaClaude = false, falhaGh = null, diffGrande = false, projectsDir = null, clones = {}, memoria = true, anteriores = [], maxPorPr = 3, delta = 'diff --git a/z b/z\n+mudou' } = {}) {
+function montar({ estado = 'OPEN', revisao = 'Sem achados.\n— Claudinei', falhaClaude = false, falhaGh = null, diffGrande = false, projectsDir = null, clones = {}, memoria = true, anteriores = [], maxPorPr = 3, delta = 'diff --git a/z b/z\n+mudou', views = null, worktreesDir = null, checklistsDir = null, falhaFetch = false } = {}) {
+  const VERDE = [{ __typename: 'CheckRun', name: 'Backend', status: 'COMPLETED', conclusion: 'SUCCESS' }]
+  const base = { title: 'feat: x', body: 'desc', author: { login: 'milton' }, state: estado, isDraft: false, mergeable: 'MERGEABLE', baseRefName: 'develop', headRefName: 'feat/x', baseRefOid: 'aaaaaaa1', headRefOid: 'bbbbbbb2', additions: 3, deletions: 1, changedFiles: 1, statusCheckRollup: VERDE, commits: [{ oid: 'bbbbbbb2', messageHeadline: 'feat: x', messageBody: '' }] }
+  const fila = [...(views ?? [{}])]
+  let vistas = 0
   const chamadas = []
   const enviados = []
   const avisos = []
   let liberar
   const portao = new Promise((r) => { liberar = r })
   const exec = async (bin, args, opts = {}) => {
-    chamadas.push({ bin, args, input: opts.input ?? null })
+    let diffNoDisco = null
+    try { if (bin === 'claude' && opts.cwd) diffNoDisco = readFileSync(join(opts.cwd, '.claude-wpp-review', 'pr.diff'), 'utf8') } catch {}
+    chamadas.push({ bin, args, input: opts.input ?? null, cwd: opts.cwd ?? null, diffNoDisco })
     if (bin === 'gh' && falhaGh === args[1]) return { code: 1, stdout: '', stderr: 'boom' }
     if (bin === 'gh' && diffGrande && args[1] === 'diff') return { code: 1, stdout: '', stderr: 'HTTP 406: the diff exceeded the maximum number of lines (20000)\nPullRequest.diff too_large' }
     if (bin === 'gh' && args[0] === 'api' && args[1] === 'user') return { code: 0, stdout: 'joaosouzacoder\n' }
@@ -27,15 +33,22 @@ function montar({ estado = 'OPEN', revisao = 'Sem achados.\n— Claudinei', falh
     if (bin === 'gh' && args[0] === 'api' && /\/compare\//.test(args[1] ?? '')) return delta == null ? { code: 1, stdout: '', stderr: 'HTTP 404' } : { code: 0, stdout: delta }
     if (bin === 'gh' && args[0] === 'api') return { code: 0, stdout: 'diff --git a/y b/y\n+por arquivo' }
     if (bin === 'gh' && args[1] === 'view') {
-      return { code: 0, stdout: JSON.stringify({ url: args[2], title: 'feat: x', body: 'desc', author: { login: 'milton' }, state: estado, baseRefName: 'develop', headRefName: 'feat/x', baseRefOid: 'aaaaaaa1', headRefOid: 'bbbbbbb2', additions: 3, deletions: 1, changedFiles: 1 }) }
+      const extra = fila.length > 1 ? fila.shift() : fila[0]
+      vistas++
+      return { code: 0, stdout: JSON.stringify({ url: args[2], ...base, ...extra }) }
     }
+    if (bin === 'gh' && args[1] === 'merge') return { code: 0, stdout: '' }
     if (bin === 'gh' && args[1] === 'diff') return { code: 0, stdout: 'diff --git a/x b/x\n+ok' }
     if (bin === 'gh' && args[1] === 'review') return { code: 0, stdout: '' }
     if (bin === 'git') {
       const clone = clones[args[1]]
       if (!clone) return { code: 128, stdout: '', stderr: 'not a repo' }
       if (args[2] === 'remote') return { code: 0, stdout: `${clone.remote}\n` }
-      if (args[2] === 'rev-parse') return { code: 0, stdout: `${clone.branch}\n` }
+      if (args[2] === 'rev-parse') return { code: 0, stdout: args[3] === '--abbrev-ref' ? `${clone.branch}\n` : `${clone.head ?? 'bbbbbbb2'}\n` }
+      if (args.includes('fetch')) return falhaFetch ? { code: 128, stdout: '', stderr: 'denied' } : { code: 0, stdout: '' }
+      if (args[2] === 'worktree' || args[2] === 'update-ref') return { code: 0, stdout: '' }
+      if (args[2] === 'diff') return { code: 0, stdout: 'diff --git a/w b/w\n+do worktree' }
+      if (args[2] === 'show') return args[3].endsWith(':CLAUDE.md') ? { code: 0, stdout: 'Regra da base.' } : { code: 128, stdout: '', stderr: 'no file' }
       if (args[2] === 'cat-file') return (clone.commits ?? []).includes(args[4]) ? { code: 0, stdout: 'commit\n' } : { code: 128, stdout: '', stderr: 'bad object' }
     }
     if (bin === 'ai-memory' && args[0] === 'search') {
@@ -57,6 +70,11 @@ function montar({ estado = 'OPEN', revisao = 'Sem achados.\n— Claudinei', falh
     nomeDe: () => 'Milton Yoshida',
     projectsDir,
     maxPorPr,
+    worktreesDir,
+    checklistsDir,
+    dormir: async () => {},
+    agora: () => vistas * 30_000,
+    ciWaitMs: 5 * 30_000,
     log: { info() {}, warn() {}, error() {} },
   })
   const esperar = async () => {
@@ -83,7 +101,8 @@ test('pedido do Milton: avisa, revisa sem ferramentas e comenta no PR', async ()
 
   const review = chamadas.find((c) => c.args[1] === 'review')
   assert.deepEqual(review.args, ['pr', 'review', PR, '--comment', '--body-file', '-'])
-  assert.equal(review.input, 'Sem achados.')
+  assert.equal(review.input.split('\n\n<!--')[0], 'Sem achados.')
+  assert.match(review.input, /<!-- claude-wpp:veredito .* limpo=0 -->/)
   assert.match(claude.input, /Não assine/)
   assert.doesNotMatch(claude.input, /Termine com/)
   assert.ok(!chamadas.some((c) => c.args.includes('--approve') || c.args.includes('--request-changes')))
@@ -326,7 +345,7 @@ test('segunda revisão é incremental: anterior, respostas e o que mudou desde e
   assert.match(input, /Bloqueante: falta teste em a\.js:3/)
   assert.match(input, /corrigi em bbbbbbb2/)
   assert.match(input, /\+mudou/)
-  assert.match(input, /"Sem bloqueios\."/)
+  assert.match(input, /só \[BLOQUEADOR\] ou \[MAIOR\] introduzidos/)
   const compare = chamadas.find((c) => /compare/.test(c.args[1] ?? ''))
   assert.equal(compare.args[1], 'repos/Solvers-it/my-solvers/compare/aaaaaaa0...bbbbbbb2')
   assert.ok(chamadas.some((c) => c.args[1] === 'review'))
@@ -369,4 +388,151 @@ test('histórico reescrito: sem delta, a revisão segue incremental com o diff c
   const input = chamadas.find((c) => c.bin === 'claude').input
   assert.match(input, /histórico reescrito/)
   assert.match(input, /diff --git a\/x b\/x/)
+})
+
+const LIMPA = 'Tudo certo, pode mergear.\n\n### Menores\n1. nome.\nVEREDITO: {"bloqueadores": 0, "maiores": 0}'
+const SUJA = 'Falta tenancy.\n\n### [BLOQUEADOR]\n- a.go:3 sem uid_tenant.\nVEREDITO: {"bloqueadores": 1, "maiores": 0}'
+
+test('revisão limpa com CI verde: comenta sem a linha do veredito e faz squash merge no commit revisado', async () => {
+  const { revisor, chamadas, enviados, avisos, esperar } = montar({ revisao: LIMPA })
+  await revisor.onOther({ key: chave(MILTON), text: PR })
+  await esperar()
+  const review = chamadas.find((c) => c.args[1] === 'review')
+  assert.doesNotMatch(review.input, /VEREDITO/)
+  assert.match(review.input, /limpo=1/)
+  const merge = chamadas.find((c) => c.args[1] === 'merge')
+  assert.deepEqual(merge.args, ['pr', 'merge', PR, '--squash', '--match-head-commit', 'bbbbbbb2'])
+  assert.ok(!merge.args.includes('--admin'))
+  assert.match(enviados.at(-1).texto, /Fiz o squash merge na develop/)
+  assert.match(avisos.at(-1), /mergeei/)
+})
+
+test('com bloqueador não há merge', async () => {
+  const { revisor, chamadas, enviados, esperar } = montar({ revisao: SUJA })
+  await revisor.onOther({ key: chave(MILTON), text: PR })
+  await esperar()
+  assert.ok(!chamadas.some((c) => c.args[1] === 'merge'))
+  assert.match(enviados.at(-1).texto, /1 bloqueador/)
+})
+
+test('veredito zero mas texto com seção [MAIOR] não mergeia', async () => {
+  const { revisor, chamadas, esperar } = montar({ revisao: 'x\n### [MAIOR]\n- b.go:1\nVEREDITO: {"bloqueadores": 0, "maiores": 0}' })
+  await revisor.onOther({ key: chave(MILTON), text: PR })
+  await esperar()
+  assert.ok(!chamadas.some((c) => c.args[1] === 'merge'))
+})
+
+test('sem linha de veredito não há merge', async () => {
+  const { revisor, chamadas, esperar } = montar({ revisao: 'Tudo certo, pode mergear.' })
+  await revisor.onOther({ key: chave(MILTON), text: PR })
+  await esperar()
+  assert.ok(!chamadas.some((c) => c.args[1] === 'merge'))
+})
+
+for (const [caso, extra, motivo] of [
+  ['CI vermelho', { statusCheckRollup: [{ __typename: 'CheckRun', name: 'Backend', status: 'COMPLETED', conclusion: 'FAILURE' }] }, /CI falhou \(Backend\)/],
+  ['sem CI', { statusCheckRollup: [] }, /não tem CI/],
+  ['base main', { baseRefName: 'main' }, /só mergeio na develop/],
+  ['rascunho', { isDraft: true }, /rascunho/],
+  ['conflito', { mergeable: 'CONFLICTING' }, /conflito/],
+]) {
+  test(`revisão limpa mas ${caso}: não mergeia e diz por quê`, async () => {
+    const { revisor, chamadas, enviados, esperar } = montar({ revisao: LIMPA, views: [extra] })
+    await revisor.onOther({ key: chave(MILTON), text: PR })
+    await esperar()
+    assert.ok(!chamadas.some((c) => c.args[1] === 'merge'))
+    assert.match(enviados.at(-1).texto, motivo)
+  })
+}
+
+test('commit novo entre a revisão e o merge: não mergeia', async () => {
+  const { revisor, chamadas, enviados, esperar } = montar({ revisao: LIMPA, views: [{}, { headRefOid: 'ccccccc3' }] })
+  await revisor.onOther({ key: chave(MILTON), text: PR })
+  await esperar()
+  assert.ok(!chamadas.some((c) => c.args[1] === 'merge'))
+  assert.match(enviados.at(-1).texto, /commit novo/)
+})
+
+test('CI pendente: espera terminar antes de revisar', async () => {
+  const PEND = [{ __typename: 'CheckRun', name: 'Backend', status: 'IN_PROGRESS', conclusion: null }]
+  const { revisor, chamadas, esperar } = montar({ revisao: LIMPA, views: [{ statusCheckRollup: PEND }, { statusCheckRollup: PEND }, {}] })
+  await revisor.onOther({ key: chave(MILTON), text: PR })
+  await esperar()
+  assert.match(chamadas.find((c) => c.bin === 'claude').input, /CI: todo verde/)
+  assert.ok(chamadas.some((c) => c.args[1] === 'merge'))
+})
+
+test('CI que não termina no prazo: revisa, mas não mergeia', async () => {
+  const PEND = [{ __typename: 'CheckRun', name: 'Backend', status: 'IN_PROGRESS', conclusion: null }]
+  const { revisor, chamadas, enviados, esperar } = montar({ revisao: LIMPA, views: [{ statusCheckRollup: PEND }] })
+  await revisor.onOther({ key: chave(MILTON), text: PR })
+  await esperar()
+  assert.match(chamadas.find((c) => c.bin === 'claude').input, /CI: ainda rodando/)
+  assert.ok(!chamadas.some((c) => c.args[1] === 'merge'))
+  assert.match(enviados.at(-1).texto, /CI ainda não terminou/)
+})
+
+test('mesmo commit já revisado limpo: só tenta o merge, sem revisar de novo', async () => {
+  const anteriores = [{ commit_id: 'bbbbbbb2', submitted_at: '2026-11-11T15:00:00Z', body: `ok\n\n${marca({ bloqueadores: 0, maiores: 0, limpo: true })}` }]
+  const { revisor, chamadas, esperar } = montar({ anteriores })
+  await revisor.onOther({ key: chave(MILTON), text: PR })
+  await esperar()
+  assert.ok(!chamadas.some((c) => c.bin === 'claude'))
+  assert.ok(chamadas.some((c) => c.args[1] === 'merge'))
+})
+
+test('com clone: revisa num worktree do head do PR, com regras da base, roteiro e diff em arquivo', async () => {
+  const p = projetos({ 'my-solvers': { remote: 'git@github.com:Solvers-it/my-solvers.git', branch: 'main', regras: 'Regra do clone.' } })
+  const wt = mkdtempSync(join(tmpdir(), 'wt-'))
+  const roteiros = mkdtempSync(join(tmpdir(), 'rot-'))
+  writeFileSync(join(roteiros, 'solvers-it.md'), '- uid_tenant em todo statement')
+  const { revisor, chamadas, esperar } = montar({ ...p, worktreesDir: wt, checklistsDir: roteiros, revisao: SUJA })
+  await revisor.onOther({ key: chave(MILTON), text: PR })
+  await esperar()
+
+  const fetch = chamadas.find((c) => c.bin === 'git' && c.args.includes('fetch'))
+  assert.ok(fetch.args.includes('https://github.com/Solvers-it/my-solvers.git'))
+  assert.ok(fetch.args.includes('+refs/pull/42/head:refs/claude-wpp/solvers-it-my-solvers-42-head'))
+  assert.ok(fetch.args.includes('+refs/heads/develop:refs/claude-wpp/solvers-it-my-solvers-42-base'))
+  const add = chamadas.find((c) => c.bin === 'git' && c.args[2] === 'worktree' && c.args[3] === 'add')
+  assert.deepEqual(add.args.slice(3), ['add', '--detach', join(wt, 'solvers-it-my-solvers-42'), 'bbbbbbb2'])
+
+  const input = chamadas.find((c) => c.bin === 'claude').input
+  assert.match(input, /checkout do próprio PR/)
+  assert.match(input, /Regra da base\./)
+  assert.doesNotMatch(input, /Regra do clone/)
+  assert.match(input, /uid_tenant em todo statement/)
+  assert.match(input, /\+do worktree/)
+  const claude = chamadas.find((c) => c.bin === 'claude')
+  assert.equal(claude.cwd, join(wt, 'solvers-it-my-solvers-42'))
+  assert.equal(claude.diffNoDisco, 'diff --git a/w b/w\n+do worktree')
+  assert.equal(existsSync(join(wt, 'solvers-it-my-solvers-42')), false)
+
+  const removidos = chamadas.filter((c) => c.bin === 'git' && c.args[2] === 'worktree' && c.args[3] === 'remove')
+  assert.ok(removidos.length >= 2, 'limpa antes e depois')
+  assert.ok(chamadas.filter((c) => c.bin === 'git' && c.args[2] === 'update-ref').length >= 4)
+})
+
+test('fetch do PR falhou: segue no clone como antes', async () => {
+  const p = projetos({ 'my-solvers': { remote: 'git@github.com:Solvers-it/my-solvers.git', branch: 'main', regras: 'Regra do clone.' } })
+  const { revisor, chamadas, esperar } = montar({ ...p, worktreesDir: mkdtempSync(join(tmpdir(), 'wt-')), falhaFetch: true })
+  await revisor.onOther({ key: chave(MILTON), text: PR })
+  await esperar()
+  const claude = chamadas.find((c) => c.bin === 'claude')
+  assert.ok(claude.args.includes('--restricted'))
+  assert.match(claude.input, /Regra do clone/)
+  assert.ok(chamadas.some((c) => c.args[1] === 'review'))
+})
+
+test('auxiliares de veredito, marca e CI', () => {
+  assert.deepEqual(lerVeredito(LIMPA).veredito, { bloqueadores: 0, maiores: 0 })
+  assert.equal(lerVeredito(LIMPA).limpo, true)
+  assert.doesNotMatch(lerVeredito(LIMPA).texto, /VEREDITO/)
+  assert.equal(lerVeredito('x\nVEREDITO: {"bloqueadores": "0", "maiores": 0}').limpo, false)
+  assert.deepEqual(lerMarca(`a ${marca({ bloqueadores: 2, maiores: 1, limpo: false })}`), { bloqueadores: 2, maiores: 1, limpo: false })
+  assert.equal(lerMarca('sem marca'), null)
+  assert.equal(estadoCi([]).estado, 'sem-ci')
+  assert.equal(estadoCi([{ __typename: 'StatusContext', context: 'ci', state: 'SUCCESS' }, { __typename: 'CheckRun', name: 'x', status: 'COMPLETED', conclusion: 'SKIPPED' }]).estado, 'verde')
+  assert.equal(estadoCi([{ __typename: 'StatusContext', context: 'ci', state: 'PENDING' }]).estado, 'pendente')
+  assert.equal(estadoCi([{ __typename: 'CheckRun', name: 'x', status: 'COMPLETED', conclusion: 'CANCELLED' }]).estado, 'vermelho')
 })

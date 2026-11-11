@@ -5,5 +5,6 @@
   "personalNumber": null,
   "openaiApiKey": null,
   "prReviewers": [],
-  "prReviewOwners": []
+  "prReviewOwners": [],
+  "reviewMergeBase": "develop"
 }
